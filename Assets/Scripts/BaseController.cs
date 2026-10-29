@@ -22,6 +22,19 @@ public class BaseController : MonoBehaviour
     public float CurrentHealth => currentHealth;
     public float CaptureProgress => captureProgress;
 
+    public void InitializeIdentity(string newBaseId, string newBaseName)
+    {
+        if (!string.IsNullOrWhiteSpace(newBaseId))
+        {
+            baseId = newBaseId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(newBaseName))
+        {
+            baseName = newBaseName;
+        }
+    }
+
     public void SetOwner(string newOwnerId)
     {
         if (string.IsNullOrWhiteSpace(newOwnerId))
