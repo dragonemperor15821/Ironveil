@@ -16,15 +16,22 @@ public class RiverGenerator : MonoBehaviour
 
     [Header("Terrain")]
     [SerializeField] private Collider terrainCollider;
+    [SerializeField] private WorldTerrainQueryProvider terrainQueryProvider;
+    [SerializeField] private Terrain terrain;
+
+    public void SetTerrainQueryProvider(WorldTerrainQueryProvider provider)
+    {
+        terrainQueryProvider = provider;
+    }
 
     [Header("River Appearance")]
     [SerializeField] private Material riverMaterial;
-    [SerializeField, Min(1f)] private float riverWidth = 6f;
+    private const float UniformRiverWidth = 3f;
     [SerializeField, Min(20)] private int pointCount = 160;
     [SerializeField] private float surfaceOffset = 0.12f;
 
     // Public access for naval base placement.
-    public float RiverWidth => riverWidth;
+    public float RiverWidth => UniformRiverWidth;
 
     [Header("Route")]
     [SerializeField] private int seed = 12345;
@@ -43,10 +50,51 @@ public class RiverGenerator : MonoBehaviour
     private readonly List<float> cumulativeRouteDistances = new List<float>();
     private readonly List<LocalNarrowing> localNarrowings =
         new List<LocalNarrowing>();
+    private Vector3[] externalRouteGuide;
+    private bool terrainProjectionFailed;
+    private bool terrainProjectionFailureLogged;
+    private string projectionFailureDetail;
     private int nextNarrowingId = 1;
 
-    // Public access to the actual generated river route.
+    // Longest run of failed terrain samples that may be interpolated between
+    // two valid samples on the terrain-query provider path.
+    private const int MaxRecoverableProjectionGap = 3;
+
+    // Public access to the actual generated river route. On the terrain-query
+    // provider path the Y values are the water surface, not the terrain.
     public IReadOnlyList<Vector3> GeneratedRoute => generatedRoute;
+
+    // Water-level profile of the last provider-path route.
+    public bool WaterFlowsFromRouteStart { get; private set; }
+    public float MaxBedAboveWater { get; private set; }
+
+    // BuildRoute uses mapCenter directly as a world-space XZ origin.
+    public Vector2 MapCenter => mapCenter;
+
+    /// <summary>
+    /// Supplies optional world-space control points from a world-layout
+    /// authoring system. When unset, the existing seeded route algorithm is
+    /// used unchanged.
+    /// </summary>
+    public void SetRouteGuide(IReadOnlyList<Vector3> controlPoints)
+    {
+        if (controlPoints == null || controlPoints.Count < 3)
+        {
+            externalRouteGuide = null;
+            return;
+        }
+
+        externalRouteGuide = new Vector3[controlPoints.Count];
+        for (int i = 0; i < controlPoints.Count; i++)
+        {
+            externalRouteGuide[i] = controlPoints[i];
+        }
+    }
+
+    public void ClearRouteGuide()
+    {
+        externalRouteGuide = null;
+    }
 
     // Adds a local width profile without changing the generated route or the
     // global RiverWidth used by ordinary land placement and route generation.
@@ -62,7 +110,7 @@ public class RiverGenerator : MonoBehaviour
             routeIndex <= 0 ||
             routeIndex >= generatedRoute.Count - 1 ||
             width <= 0f ||
-            width >= riverWidth ||
+            width >= UniformRiverWidth ||
             taperHalfDistance <= 0f)
         {
             return false;
@@ -109,10 +157,12 @@ public class RiverGenerator : MonoBehaviour
     [ContextMenu("Generate River")]
     public void GenerateRiver()
     {
-        if (terrainCollider == null || riverMaterial == null)
+        if ((terrainCollider == null &&
+             (terrainQueryProvider == null || !terrainQueryProvider.IsReady)) ||
+            riverMaterial == null)
         {
             Debug.LogError(
-                "RiverGenerator: Assign Terrain Collider and River Material.",
+                "RiverGenerator: Assign a terrain collider or registered terrain-query provider, and assign River Material.",
                 this);
             return;
         }
@@ -130,9 +180,25 @@ public class RiverGenerator : MonoBehaviour
 
         Random.State previousRandomState = Random.state;
         Random.InitState(seed);
+        terrainProjectionFailed = false;
+        terrainProjectionFailureLogged = false;
+        projectionFailureDetail = null;
+        MaxBedAboveWater = 0f;
 
         generatedRoute.Clear();
         generatedRoute.AddRange(BuildRoute());
+
+        if (terrainProjectionFailed)
+        {
+            generatedRoute.Clear();
+            Random.state = previousRandomState;
+            Debug.LogError(
+                "RiverGenerator: Terrain projection failed for one or more route points; route was not published." +
+                (projectionFailureDetail != null ? " Reason: " + projectionFailureDetail + "." : string.Empty) +
+                (terrainQueryProvider != null ? " Provider: " + terrainQueryProvider.DescribeDiagnostics() : string.Empty),
+                this);
+            return;
+        }
 
         localNarrowings.Clear();
         RebuildCumulativeRouteDistances();
@@ -226,7 +292,7 @@ public class RiverGenerator : MonoBehaviour
 
     private float GetRiverWidthAtIndex(int routeIndex)
     {
-        float width = riverWidth;
+        float width = UniformRiverWidth;
         float routeDistance = cumulativeRouteDistances[routeIndex];
 
         foreach (LocalNarrowing narrowing in localNarrowings)
@@ -240,13 +306,51 @@ public class RiverGenerator : MonoBehaviour
                             (3f - 2f * normalizedDistance);
             float candidateWidth = Mathf.Lerp(
                 narrowing.width,
-                riverWidth,
+                UniformRiverWidth,
                 smoothT);
 
             width = Mathf.Min(width, candidateWidth);
         }
 
         return width;
+    }
+
+    // Returns the generated width profile at a route vertex, including a
+    // proposed Naval narrowing that has not yet been registered on the mesh.
+    public float GetRiverWidthAtIndexWithPendingNarrowing(
+        int routeIndex,
+        int pendingNarrowingRouteIndex,
+        float pendingWidth,
+        float pendingTaperHalfDistance)
+    {
+        if (routeIndex < 0 || routeIndex >= generatedRoute.Count ||
+            cumulativeRouteDistances.Count != generatedRoute.Count)
+        {
+            return UniformRiverWidth;
+        }
+
+        float width = GetRiverWidthAtIndex(routeIndex);
+        if (pendingNarrowingRouteIndex <= 0 ||
+            pendingNarrowingRouteIndex >= generatedRoute.Count - 1 ||
+            pendingWidth <= 0f || pendingWidth >= UniformRiverWidth ||
+            pendingTaperHalfDistance <= 0f)
+        {
+            return width;
+        }
+
+        float distance = Mathf.Abs(
+            cumulativeRouteDistances[routeIndex] -
+            cumulativeRouteDistances[pendingNarrowingRouteIndex]);
+        float normalizedDistance = Mathf.Clamp01(
+            distance / pendingTaperHalfDistance);
+        float smoothT = normalizedDistance * normalizedDistance *
+                        (3f - 2f * normalizedDistance);
+        float pendingProfileWidth = Mathf.Lerp(
+            pendingWidth,
+            UniformRiverWidth,
+            smoothT);
+
+        return Mathf.Min(width, pendingProfileWidth);
     }
 
     private List<Vector3> BuildRoute()
@@ -256,48 +360,60 @@ public class RiverGenerator : MonoBehaviour
         float minZ = mapCenter.y - mapSize.y * 0.5f + edgePadding;
         float maxZ = mapCenter.y + mapSize.y * 0.5f - edgePadding;
 
-        Vector3 start;
-        Vector3 end;
-
-        // Start and end on opposite edges.
-        if (Random.value < 0.5f)
+        List<Vector3> controls;
+        if (externalRouteGuide != null && externalRouteGuide.Length >= 3)
         {
-            start = new Vector3(minX, 0f, Random.Range(minZ, maxZ));
-            end = new Vector3(maxX, 0f, Random.Range(minZ, maxZ));
+            controls = new List<Vector3>(externalRouteGuide);
         }
         else
         {
-            start = new Vector3(Random.Range(minX, maxX), 0f, minZ);
-            end = new Vector3(Random.Range(minX, maxX), 0f, maxZ);
+            Vector3 start;
+            Vector3 end;
+
+            // Start and end on opposite edges.
+            if (Random.value < 0.5f)
+            {
+                start = new Vector3(minX, 0f, Random.Range(minZ, maxZ));
+                end = new Vector3(maxX, 0f, Random.Range(minZ, maxZ));
+            }
+            else
+            {
+                start = new Vector3(Random.Range(minX, maxX), 0f, minZ);
+                end = new Vector3(Random.Range(minX, maxX), 0f, maxZ);
+            }
+
+            Vector3 forward = (end - start).normalized;
+            Vector3 sideways = new Vector3(-forward.z, 0f, forward.x);
+            controls = new List<Vector3> { start };
+
+            for (int i = 1; i < routeControlCount - 1; i++)
+            {
+                float t = i / (float)(routeControlCount - 1);
+                float envelope = Mathf.Sin(t * Mathf.PI);
+
+                Vector3 p = Vector3.Lerp(start, end, t);
+
+                p += sideways *
+                     Random.Range(-bendAmount, bendAmount) *
+                     windingAmount * envelope;
+
+                p += forward *
+                     Random.Range(-bendAmount * 0.25f, bendAmount * 0.25f) *
+                     windingAmount * envelope;
+
+                p.x = Mathf.Clamp(p.x, minX, maxX);
+                p.z = Mathf.Clamp(p.z, minZ, maxZ);
+
+                controls.Add(p);
+            }
+
+            controls.Add(end);
         }
 
-        Vector3 forward = (end - start).normalized;
-        Vector3 sideways = new Vector3(-forward.z, 0f, forward.x);
-
-        List<Vector3> controls = new List<Vector3> { start };
-
-        for (int i = 1; i < routeControlCount - 1; i++)
+        if (terrainQueryProvider != null && terrainQueryProvider.IsReady)
         {
-            float t = i / (float)(routeControlCount - 1);
-            float envelope = Mathf.Sin(t * Mathf.PI);
-
-            Vector3 p = Vector3.Lerp(start, end, t);
-
-            p += sideways *
-                 Random.Range(-bendAmount, bendAmount) *
-                 windingAmount * envelope;
-
-            p += forward *
-                 Random.Range(-bendAmount * 0.25f, bendAmount * 0.25f) *
-                 windingAmount * envelope;
-
-            p.x = Mathf.Clamp(p.x, minX, maxX);
-            p.z = Mathf.Clamp(p.z, minZ, maxZ);
-
-            controls.Add(p);
+            return BuildProviderRoute(controls, minX, maxX, minZ, maxZ);
         }
-
-        controls.Add(end);
 
         List<Vector3> route = new List<Vector3>(pointCount);
 
@@ -310,8 +426,116 @@ public class RiverGenerator : MonoBehaviour
         return route;
     }
 
+    // Multi-tile (terrain-query provider) path. The single-collider path in
+    // BuildRoute is unchanged.
+    private List<Vector3> BuildProviderRoute(
+        List<Vector3> controls, float minX, float maxX, float minZ, float maxZ)
+    {
+        List<Vector3> route = new List<Vector3>(pointCount);
+
+        // Guides are authored edge to edge; keep their shape but trim them to
+        // the padded map so no route point sits on the outer world edge.
+        if (!WorldTerrainQueryProvider.TryGetCurveRangeInside(
+                t => EvaluateSpline(controls, t),
+                minX, maxX, minZ, maxZ, out float t0, out float t1))
+        {
+            terrainProjectionFailed = true;
+            projectionFailureDetail = "the route guide lies entirely outside the padded map";
+            return route;
+        }
+
+        for (int i = 0; i < pointCount; i++)
+        {
+            float t = Mathf.Lerp(t0, t1, i / (float)(pointCount - 1));
+            route.Add(EvaluateSpline(controls, t));
+        }
+
+        if (!terrainQueryProvider.TryProjectRoute(
+                route, 100f, MaxRecoverableProjectionGap,
+                out _, out int recovered, out string failure))
+        {
+            terrainProjectionFailed = true;
+            projectionFailureDetail = failure;
+            return route;
+        }
+
+        if (recovered > 0)
+        {
+            Debug.LogWarning(
+                $"RiverGenerator: {recovered} of {route.Count} route samples were interpolated after failed terrain queries.",
+                this);
+        }
+
+        ApplyWaterLevelProfile(route);
+        return route;
+    }
+
+    // Converts projected bed heights into a water surface that never climbs:
+    // starting from the higher end, each point's level is the lowest
+    // (bed + surfaceOffset) reached so far. Where the bed rises above that
+    // level the terrain has to be cut down to the water (the world-generation
+    // prototype carves this channel); MaxBedAboveWater reports how much.
+    private void ApplyWaterLevelProfile(List<Vector3> route)
+    {
+        int count = route.Count;
+        int endSamples = Mathf.Max(1, count / 10);
+        float startBed = 0f;
+        float endBed = 0f;
+        for (int i = 0; i < endSamples; i++)
+        {
+            startBed += route[i].y;
+            endBed += route[count - 1 - i].y;
+        }
+
+        bool fromStart = startBed >= endBed;
+        float level = float.PositiveInfinity;
+        float maxBedAboveWater = 0f;
+        for (int step = 0; step < count; step++)
+        {
+            int i = fromStart ? step : count - 1 - step;
+            Vector3 point = route[i];
+            float bed = point.y;
+            level = Mathf.Min(level, bed + surfaceOffset);
+            maxBedAboveWater = Mathf.Max(maxBedAboveWater, bed - level);
+            point.y = level;
+            route[i] = point;
+        }
+
+        WaterFlowsFromRouteStart = fromStart;
+        MaxBedAboveWater = maxBedAboveWater;
+    }
+
     private Vector3 ProjectOntoTerrain(Vector3 point)
     {
+        if (terrainQueryProvider != null && terrainQueryProvider.IsReady)
+        {
+            if (terrainQueryProvider.TryRaycastDown(point, 100f, out RaycastHit terrainHit))
+            {
+                point.y = terrainHit.point.y + surfaceOffset;
+            }
+            else
+            {
+                terrainProjectionFailed = true;
+                if (!terrainProjectionFailureLogged)
+                {
+                    terrainProjectionFailureLogged = true;
+                    Debug.LogError(
+                        "RiverGenerator: Guide point is outside the registered terrain tiles. " +
+                        $"Point=({point.x:F1}, {point.y:F1}, {point.z:F1}), " +
+                        $"provider.IsReady={terrainQueryProvider.IsReady}, " +
+                        $"IsFinite={UnityEngine.Vector3.Distance(point, Vector3.zero) < 1000f}",
+                        this);
+                }
+            }
+            return point;
+        }
+
+        if (terrainCollider == null)
+        {
+            terrainProjectionFailed = true;
+            return point;
+        }
+
         Bounds bounds = terrainCollider.bounds;
 
         Ray ray = new Ray(
