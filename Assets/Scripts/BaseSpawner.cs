@@ -63,6 +63,9 @@ public class BaseSpawner : MonoBehaviour
         // the single-generator path.
         public int preferredRouteId;
         public int routeId;
+        // Stage 1 level data (only set when assignBaseLevels is enabled).
+        public bool hasLevel;
+        public BaseLevel level;
     }
 
     private sealed class RouteIndexSamplingState
@@ -294,6 +297,19 @@ public class BaseSpawner : MonoBehaviour
         public bool hasTurretFacing;
     }
 
+    // A transformed horizontal footprint: world centre, size along the
+    // rotation's local X/Z axes (already including spawn scale), yaw-only rotation.
+    private struct FootprintRect
+    {
+        public bool valid;
+        public Vector3 center;
+        public Vector3 size;
+        public Quaternion rotation;
+        // Edge clearance this footprint demands from others; spacing between
+        // two footprints uses the larger of the two (symmetric rule).
+        public float clearance;
+    }
+
     // Full validation result for a route placement.
     private struct PlacementValidation
     {
@@ -326,6 +342,10 @@ public class BaseSpawner : MonoBehaviour
         public float footprintHeightVariation;
         public float footprintMaxSlope;
         public string rejectReason;
+        // Transformed XZ footprints recorded for footprint-aware spacing.
+        public FootprintRect baseRect;
+        public bool hasHangarRect;
+        public FootprintRect hangarRect;
     }
 
     private struct PlacedNavalPlacement
@@ -721,6 +741,167 @@ public class BaseSpawner : MonoBehaviour
         seed = generationSeed;
     }
 
+    // ------------------------------------------------------------------
+    // Stage 1 world scaling and level foundation. Every default below is
+    // neutral (scale 1, checks off, no levels), so a scene that does not set
+    // these fields (MainBuild) runs exactly the previous code path.
+    // ------------------------------------------------------------------
+
+    [Header("Spawn Scale (World Explorer)")]
+    [Tooltip(
+        "Uniform scale applied at spawn time to every main base and its " +
+        "hangar. Prefab assets are never modified. Measured footprints, " +
+        "hangar offsets and base-to-hangar gaps scale with it so the " +
+        "composite keeps its proportions; terrain, river and railway do not. " +
+        "1 = previous behaviour.")]
+    [SerializeField, Min(0.01f)]
+    private float baseSpawnScale = 1f;
+
+    [Tooltip(
+        "Scale the footprint height-variation tolerance (and naval waterline " +
+        "draught) with baseSpawnScale, so the relative flatness rule for a " +
+        "base is unchanged. Has no effect at scale 1.")]
+    [SerializeField]
+    private bool scaleTerrainTolerancesWithBase = true;
+
+    [Header("Footprint-Aware Spacing (World Explorer)")]
+    [Tooltip(
+        "Reject candidates whose transformed footprint (main base and hangar " +
+        "rectangles) comes closer than the clearance below to any placed " +
+        "footprint, and measure land river/rail clearance from the footprint " +
+        "edge. The existing pivot-spacing rules remain in force as well.")]
+    [SerializeField]
+    private bool footprintAwareSpacing = false;
+
+    [Tooltip("Minimum edge-to-edge gap between a new land base and any placed footprint.")]
+    [SerializeField, Min(0f)]
+    private float landFootprintClearance = 4f;
+
+    [Tooltip("Minimum edge-to-edge gap between a new route base (or its hangar) and any placed footprint.")]
+    [SerializeField, Min(0f)]
+    private float routeFootprintClearance = 2f;
+
+    [Tooltip("Gap kept between a naval/rail main-base disc and any other river or railway corridor.")]
+    [SerializeField, Min(0f)]
+    private float routeCorridorFootprintClearance = 0.5f;
+
+    [Header("Base Levels")]
+    [Tooltip(
+        "Assign a deterministic L1-L6 level to every requested base from the " +
+        "generation seed (independent of UnityEngine.Random) and attach a " +
+        "BaseLevelInfo component. Data only; no combat.")]
+    [SerializeField]
+    private bool assignBaseLevels = false;
+
+    [Tooltip("Target count per level L1..L6; scaled by largest remainder if the total differs.")]
+    [SerializeField]
+    private int[] levelTargetCounts = { 59, 58, 58, 59, 58, 58 };
+
+    [Tooltip("Optional per (type, level) replacement models. Empty = every level uses the current prefab.")]
+    [SerializeField]
+    private BaseLevelVisualSet levelVisualSet;
+
+    [Header("Strategic Formations (Stage 2b facing pairs - OFF by default)")]
+    [Tooltip(
+        "Stage 2b: after level assignment, place 7-8 deterministic L5/L6 land " +
+        "Heli/Air facing pairs first (private random stream, real placement " +
+        "checks, footprints reserved), then place every other base with the " +
+        "existing rules. ON changes the layout. OFF reproduces the existing " +
+        "layout exactly.")]
+    [SerializeField]
+    private bool generateStrategicFormations = false;
+
+    [Tooltip(
+        "Flak ranges in SC reference units plus the single SC-to-Unity factor S " +
+        "(provisional 1.0). The only place S is configured.")]
+    [SerializeField]
+    private FlakRangeTable crossfireRanges = FlakRangeTable.CreateApproved();
+
+    [Tooltip("Provisional front attack-position model (Unity units).")]
+    [SerializeField]
+    private CrossfireAttackModel crossfireAttackModel = CrossfireAttackModel.CreateProvisional();
+
+    [Tooltip("Formation eligibility (eligibleLevels, default L5/L6). Stage 2b uses only eligibleLevels; cluster fields are unused.")]
+    [SerializeField]
+    private FormationPlannerSettings formationPlannerSettings = new FormationPlannerSettings();
+
+    [Tooltip("Stage 2b facing-pair count (7-8 per seed), yaw variation and sampling.")]
+    [SerializeField]
+    private FacingPairSettings facingPairSettings = new FacingPairSettings();
+
+    [Header("Strategic Clusters (Stage 2c - OFF by default, independent of facing pairs)")]
+    [Tooltip(
+        "Stage 2c: place 2-3 deterministic inward-facing L5/L6 land Heli/Air " +
+        "clusters (3-4 members each). With facing pairs also on, pairs are " +
+        "placed first and clusters use only the remaining eligible bases and " +
+        "space. ON changes the layout. OFF leaves the layout untouched.")]
+    [SerializeField]
+    private bool generateStrategicClusters = false;
+
+    [Tooltip("Stage 2c cluster counts, geometry variation, support rule and approach reservation.")]
+    [SerializeField]
+    private ClusterSettings clusterSettings = new ClusterSettings();
+
+    private readonly List<ClusterRecord> lastClusters = new List<ClusterRecord>();
+    public bool GenerateStrategicClusters => generateStrategicClusters;
+    /// <summary>Clusters placed by the last run (empty when clusters are off).</summary>
+    public IReadOnlyList<ClusterRecord> LastClusters => lastClusters;
+
+    private FormationPlan lastFormationPlan;
+    private readonly List<FacingPairRecord> lastFacingPairs = new List<FacingPairRecord>();
+    private string lastFormationReport;
+
+    public bool GenerateStrategicFormations => generateStrategicFormations;
+    public FlakRangeTable CrossfireRanges => crossfireRanges;
+    public CrossfireAttackModel AttackModel => crossfireAttackModel;
+    /// <summary>Formations placed by the last run (null when formation generation is off).</summary>
+    public FormationPlan LastFormationPlan => lastFormationPlan;
+    /// <summary>Facing pairs placed by the last run (empty when off).</summary>
+    public IReadOnlyList<FacingPairRecord> LastFacingPairs => lastFacingPairs;
+    /// <summary>Editor-readable report of the last run's formations (null when off).</summary>
+    public string LastFormationReport => lastFormationReport;
+
+    private readonly List<FootprintRect> placedFootprints =
+        new List<FootprintRect>();
+
+    // Stage 2b.1: reserved facing-pair corridor strips. Always empty when
+    // strategic formations are off, so every corridor check is a no-op then.
+    private struct ReservedCorridor
+    {
+        public FootprintRect rect;
+        public string formationId;
+        // Base IDs of the formation that owns this strip (exempt from it).
+        public string[] members;
+    }
+
+    private readonly List<ReservedCorridor> reservedCorridors =
+        new List<ReservedCorridor>();
+
+    // Ordinary (non-formation) placement attempts rejected by a reserved corridor in the last run.
+    private int lastCorridorRejections;
+    public int LastCorridorRejections => lastCorridorRejections;
+
+    private readonly List<GeneratedBaseRecord> generatedBaseRecords =
+        new List<GeneratedBaseRecord>();
+
+    // Set by TryFindLandPlacement on success (its signature is reflected by
+    // the validation runner, so it is not extended).
+    private FootprintRect pendingLandFootprint;
+
+    // Spawn scale at which the footprint/anchor caches were measured.
+    private float measuredFootprintScale = 1f;
+
+    /// <summary>Identity, type, level and pose of every base from the last run.</summary>
+    public IReadOnlyList<GeneratedBaseRecord> GeneratedBaseRecords => generatedBaseRecords;
+
+    public float BaseSpawnScale => baseSpawnScale;
+
+    private float TerrainToleranceScale =>
+        scaleTerrainTolerancesWithBase ? baseSpawnScale : 1f;
+
+    private float EffectiveFootprintHeightVariation =>
+        maxFootprintHeightVariation * TerrainToleranceScale;
+
     [Header("Generation")]
     [SerializeField]
     private bool generateOnStart = true;
@@ -808,6 +989,19 @@ public class BaseSpawner : MonoBehaviour
 #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
+        // Stage 2b facing pairs: partner line, front attack positions.
+        if (showDiagnosticGizmos)
+        {
+            foreach (FacingPairRecord pair in lastFacingPairs)
+            {
+                Gizmos.color = Color.magenta;
+                Gizmos.DrawLine(pair.memberA.position, pair.memberB.position);
+                Gizmos.color = Color.red;
+                Gizmos.DrawWireSphere(pair.memberA.frontAttackPosition, 0.6f);
+                Gizmos.DrawWireSphere(pair.memberB.frontAttackPosition, 0.6f);
+            }
+        }
+
         if (!showDiagnosticGizmos || lastPlacements.Count == 0)
         {
             return;
@@ -922,7 +1116,22 @@ public class BaseSpawner : MonoBehaviour
         placedPositions.Clear();
         placedRouteHangarPositions.Clear();
         placedNavalPlacements.Clear();
+        placedFootprints.Clear();
+        reservedCorridors.Clear();
+        lastCorridorRejections = 0;
+        generatedBaseRecords.Clear();
         lastPlacements.Clear();
+
+        // Measured footprints/anchors are cached at spawn scale; re-measure
+        // if the scale changed since they were cached. (Lookups preserve the
+        // UnityEngine.Random state, so this does not alter the random stream.)
+        if (measuredFootprintScale != baseSpawnScale)
+        {
+            baseFootprintCache.Clear();
+            navalAnchorCache.Clear();
+            railAnchorCache.Clear();
+            measuredFootprintScale = baseSpawnScale;
+        }
         terrainSamplingComparisonCounts.Clear();
         terrainSamplingVariantCounts.Clear();
         terrainSamplingAcceptanceDisagreements.Clear();
@@ -934,6 +1143,18 @@ public class BaseSpawner : MonoBehaviour
         CreateClusters();
 
         List<BaseRequest> requests = BuildRequests();
+        if (assignBaseLevels)
+        {
+            // Pure function of the seed and the stable base IDs; it does not
+            // read or advance UnityEngine.Random.
+            AssignRequestLevels(requests);
+        }
+
+        lastFormationPlan = null;
+        lastFacingPairs.Clear();
+        lastClusters.Clear();
+        lastFormationReport = null;
+
         AssignPreferredRoutes(requests);   // no-op with a single river and railway
         ShuffleRequests(requests);
 
@@ -952,8 +1173,35 @@ public class BaseSpawner : MonoBehaviour
         Dictionary<string, int> rejectReasonsTotal =
             new Dictionary<string, int>();
 
+        // Stage 2b (OFF by default): place the facing pairs first and reserve
+        // their footprints. Uses private random streams and restores
+        // UnityEngine.Random, so the ordinary stream below is not consumed.
+        // Stage 2c (OFF by default): clusters after the pairs, from the
+        // remaining eligible bases and space. Same stream discipline.
+        HashSet<BaseRequest> formationPlaced = null;
+        if (generateStrategicFormations || generateStrategicClusters)
+        {
+            formationPlaced = new HashSet<BaseRequest>();
+            if (generateStrategicFormations)
+            {
+                formationPlaced.UnionWith(PlaceStrategicFormations(requests, spawnedByType));
+            }
+
+            if (generateStrategicClusters)
+            {
+                formationPlaced.UnionWith(PlaceStrategicClusters(requests, spawnedByType, formationPlaced));
+            }
+
+            spawned += formationPlaced.Count;
+        }
+
         foreach (BaseRequest request in requests)
         {
+            if (formationPlaced != null && formationPlaced.Contains(request))
+            {
+                continue;
+            }
+
             bool success = false;
 
             Dictionary<string, int> rejectReasons =
@@ -980,6 +1228,11 @@ public class BaseSpawner : MonoBehaviour
                     if (string.IsNullOrEmpty(reason))
                     {
                         reason = "rejected";
+                    }
+
+                    if (reason == CorridorRejectReason)
+                    {
+                        lastCorridorRejections++;
                     }
 
                     NotifyPlacementRejected(request.baseName, reason);
@@ -1012,6 +1265,27 @@ public class BaseSpawner : MonoBehaviour
                 }
 
                 placedPositions.Add(pose.position);
+                if (footprintAwareSpacing)
+                {
+                    float ownerClearance = request.placement == PlacementType.Land
+                        ? landFootprintClearance
+                        : routeFootprintClearance;
+
+                    if (validation.baseRect.valid)
+                    {
+                        FootprintRect placedBase = validation.baseRect;
+                        placedBase.clearance = ownerClearance;
+                        placedFootprints.Add(placedBase);
+                    }
+
+                    if (validation.hasHangarRect && validation.hangarRect.valid)
+                    {
+                        FootprintRect placedHangar = validation.hangarRect;
+                        placedHangar.clearance = ownerClearance;
+                        placedFootprints.Add(placedHangar);
+                    }
+                }
+
                 if (request.placement != PlacementType.Land &&
                     validation.valid)
                 {
@@ -1165,6 +1439,23 @@ public class BaseSpawner : MonoBehaviour
             $"IRONVEIL: Spawned {spawned}/{requests.Count} requested " +
             $"bases. Failed placements: {failed}. {summary}",
 
+            this);
+
+        if (lastFormationReport != null)
+        {
+            lastFormationReport +=
+                $"\nreserved corridor strips {reservedCorridors.Count} | ordinary placement attempts " +
+                $"rejected by reserved corridors {lastCorridorRejections}\n";
+            Debug.Log(lastFormationReport, this);
+        }
+    }
+
+    [ContextMenu("Log Strategic Formation Report")]
+    private void LogStrategicFormationReport()
+    {
+        Debug.Log(
+            lastFormationReport ??
+            "BaseSpawner: no strategic formations in the last run (generateStrategicFormations is off or nothing was generated).",
             this);
     }
 
@@ -1385,6 +1676,1112 @@ public class BaseSpawner : MonoBehaviour
         return requests;
     }
 
+    // Stage 1: deterministic levels per stable base ID, assigned before
+    // placement so an optional per-level model is what placement measures.
+    private void AssignRequestLevels(List<BaseRequest> requests)
+    {
+        Dictionary<string, BaseLevel> levels = BaseLevelAssignment.Assign(
+            seed,
+            requests.Select(BuildBaseId),
+            levelTargetCounts);
+
+        foreach (BaseRequest request in requests)
+        {
+            request.level = levels[BuildBaseId(request)];
+            request.hasLevel = true;
+
+            if (levelVisualSet != null)
+            {
+                GameObject replacement =
+                    levelVisualSet.Resolve(request.baseName, request.level);
+                if (replacement != null)
+                {
+                    request.prefab = replacement;
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Stage 2b: deterministic L5/L6 land Heli/Air facing pairs, placed before
+    // every other base with the real land checks; their footprints are then
+    // reserved for ordinary placement. Pair selection and pose sampling use
+    // private SplitMix64 streams; UnityEngine.Random is saved and restored.
+    // Returns the requests placed as formation members.
+    // ------------------------------------------------------------------
+    private HashSet<BaseRequest> PlaceStrategicFormations(
+        List<BaseRequest> requests,
+        Dictionary<string, int> spawnedByType)
+    {
+        HashSet<BaseRequest> placed = new HashSet<BaseRequest>();
+
+        if (!assignBaseLevels)
+        {
+            Debug.LogWarning(
+                "BaseSpawner: Strategic formations need assignBaseLevels; no formation was placed.",
+                this);
+            return placed;
+        }
+
+        string rangeError = "missing";
+        if (crossfireRanges == null || !crossfireRanges.Validate(out rangeError))
+        {
+            Debug.LogWarning(
+                "BaseSpawner: Strategic formations skipped, invalid Flak range table: " +
+                rangeError,
+                this);
+            return placed;
+        }
+
+        CrossfireAttackModel model = crossfireAttackModel ?? CrossfireAttackModel.CreateProvisional();
+        FacingPairSettings settings = facingPairSettings ?? new FacingPairSettings();
+        FormationPlannerSettings eligibility = formationPlannerSettings ?? new FormationPlannerSettings();
+
+        if (settings.reserveCorridors && !footprintAwareSpacing)
+        {
+            Debug.LogWarning(
+                "BaseSpawner: facing-pair corridor reservation needs footprintAwareSpacing; " +
+                "corridors are recorded but not enforced.",
+                this);
+        }
+
+        Dictionary<string, BaseRequest> requestById =
+            new Dictionary<string, BaseRequest>(StringComparer.Ordinal);
+        Dictionary<GameObject, bool> frontByPrefab = new Dictionary<GameObject, bool>();
+        List<FormationCandidate> candidates = new List<FormationCandidate>(requests.Count);
+        foreach (BaseRequest request in requests)
+        {
+            if (!frontByPrefab.TryGetValue(request.prefab, out bool hasFront))
+            {
+                hasFront = PrefabHasDefensiveFront(request.prefab);
+                frontByPrefab[request.prefab] = hasFront;
+            }
+
+            string id = BuildBaseId(request);
+            requestById[id] = request;
+            candidates.Add(new FormationCandidate
+            {
+                baseId = id,
+                baseType = request.baseName,
+                level = request.level,
+                hasLevel = request.hasLevel,
+                isRouteBase = request.placement != PlacementType.Land,
+                hasDefensiveFront = hasFront
+            });
+        }
+
+        SortedDictionary<string, int> exclusions =
+            new SortedDictionary<string, int>(StringComparer.Ordinal);
+        List<FormationCandidate> pool = FacingPairFormations.SelectPool(
+            seed, candidates, eligibility, settings, out int pairCount, exclusions);
+
+        FormationPlan plan = new FormationPlan
+        {
+            seed = seed,
+            scToUnity = crossfireRanges.ScToUnity,
+            eligibleCount = pool.Count
+        };
+        foreach (KeyValuePair<string, int> kv in exclusions) plan.exclusions[kv.Key] = kv.Value;
+
+        FormationRandom rng = new FormationRandom(seed, FacingPairFormations.PlacementSalt);
+        Random.State savedRandomState = Random.state;
+        int cursor = 0;
+        int unfilled = 0;
+        try
+        {
+            for (int k = 0; k < pairCount; k++)
+            {
+                string formationId = $"FORM_PAIR_{lastFacingPairs.Count + 1:000}";
+                FacingPairRecord record = null;
+                int substitutions = 0;
+                while (record == null &&
+                       TakePairMembers(pool, ref cursor, model, out FormationCandidate a, out FormationCandidate b))
+                {
+                    record = TryPlaceFacingPair(
+                        formationId, requestById[a.baseId], requestById[b.baseId], settings, model, rng);
+                    if (record != null)
+                    {
+                        record.memberSubstitutions = substitutions;
+                        placed.Add(requestById[a.baseId]);
+                        placed.Add(requestById[b.baseId]);
+                    }
+                    else if (++substitutions > settings.maxMemberSubstitutions)
+                    {
+                        break;
+                    }
+                }
+
+                if (record == null)
+                {
+                    unfilled++;
+                    continue;
+                }
+
+                lastFacingPairs.Add(record);
+                plan.formations.Add(BuildFacingPairSpec(record));
+                foreach (FacingPairMember m in new[] { record.memberA, record.memberB })
+                {
+                    spawnedByType[m.baseType] =
+                        spawnedByType.TryGetValue(m.baseType, out int n) ? n + 1 : 1;
+                }
+            }
+        }
+        finally
+        {
+            Random.state = savedRandomState;
+        }
+
+        plan.unfilledFormations = unfilled;
+        lastFormationPlan = plan;
+        lastFormationReport = FacingPairFormations.BuildReport(
+            seed, crossfireRanges.ScToUnity, model, pairCount, pool.Count,
+            lastFacingPairs, exclusions, unfilled);
+
+        if (unfilled > 0)
+        {
+            Debug.LogWarning(
+                $"BaseSpawner: {unfilled} of {pairCount} facing pair(s) could not be placed; " +
+                "their members were placed by the ordinary rules.",
+                this);
+        }
+
+        return placed;
+    }
+
+    // Next two members whose engagement windows overlap (L5/L6 always do).
+    private bool TakePairMembers(
+        List<FormationCandidate> pool,
+        ref int cursor,
+        CrossfireAttackModel model,
+        out FormationCandidate a,
+        out FormationCandidate b)
+    {
+        a = default(FormationCandidate);
+        b = default(FormationCandidate);
+        while (cursor < pool.Count - 1)
+        {
+            a = pool[cursor];
+            for (int j = cursor + 1; j < pool.Count; j++)
+            {
+                if (FacingPairFormations.TryGetFacingWindow(
+                        a.level, pool[j].level, crossfireRanges, model, out _, out _))
+                {
+                    b = pool[j];
+                    pool[j] = pool[cursor + 1];
+                    pool[cursor + 1] = b;
+                    cursor += 2;
+                    return true;
+                }
+            }
+
+            cursor++;   // no compatible partner left for a
+        }
+
+        return false;
+    }
+
+    private FacingPairRecord TryPlaceFacingPair(
+        string formationId,
+        BaseRequest requestA,
+        BaseRequest requestB,
+        FacingPairSettings settings,
+        CrossfireAttackModel model,
+        FormationRandom rng)
+    {
+        if (!FacingPairFormations.TryGetFacingWindow(
+                requestA.level, requestB.level, crossfireRanges, model,
+                out float windowMin, out float windowMax))
+        {
+            return null;
+        }
+
+        FacingPairFormations.TryGetOverlapBand(
+            requestA.level, requestB.level, crossfireRanges, out float overlapMin, out float overlapMax);
+
+        float lo = windowMin + settings.windowEdgeMargin;
+        float hi = windowMax - settings.windowEdgeMargin;
+        if (lo > hi)
+        {
+            lo = hi = 0.5f * (windowMin + windowMax);
+        }
+
+        float halfX = mapSizeX / 2f - edgePadding;
+        float halfZ = mapSizeZ / 2f - edgePadding;
+        float jitter = settings.maxYawJitterDegrees;
+        Dictionary<string, int> rejections = new Dictionary<string, int>();
+
+        for (int attempt = 1; attempt <= settings.attemptsPerPair; attempt++)
+        {
+            // Fixed draw order per attempt.
+            float spacing = rng.Range(lo, hi);
+            float cx = rng.Range(-halfX, halfX);
+            float cz = rng.Range(-halfZ, halfZ);
+            float heading = rng.Range(0f, 360f);
+            float jitterA = rng.Range(-jitter, jitter);
+            float jitterB = rng.Range(-jitter, jitter);
+
+            Vector3 axis = CrossfireGeometry.ForwardFromYaw(heading);
+            Vector3 centre = new Vector3(transform.position.x + cx, 0f, transform.position.z + cz);
+            Vector3 xzA = centre - axis * (spacing * 0.5f);
+            Vector3 xzB = centre + axis * (spacing * 0.5f);
+            float intendedA = Mathf.Repeat(heading + jitterA, 360f);
+            float intendedB = Mathf.Repeat(heading + 180f + jitterB, 360f);
+
+            if (!TryEvaluateFormationPose(requestA, xzA, intendedA,
+                    out Vector3 posA, out Quaternion rotA, out FootprintRect rectA, out string reason))
+            {
+                Count(rejections, "A: " + reason);
+                continue;
+            }
+
+            // B is checked against everything placed so far plus A.
+            int positionMark = placedPositions.Count;
+            int footprintMark = placedFootprints.Count;
+            ReserveLandFootprint(posA, rectA);
+            bool okB = TryEvaluateFormationPose(requestB, xzB, intendedB,
+                out Vector3 posB, out Quaternion rotB, out FootprintRect rectB, out reason);
+            TrimPlaced(positionMark, footprintMark);
+            if (!okB)
+            {
+                Count(rejections, "B: " + reason);
+                continue;
+            }
+
+            CrossfireBase baseA = CrossfireBase.FromPose(
+                BuildBaseId(requestA), requestA.baseName, requestA.level, posA, rotA, true);
+            CrossfireBase baseB = CrossfireBase.FromPose(
+                BuildBaseId(requestB), requestB.baseName, requestB.level, posB, rotB, true);
+
+            FacingPairMember memberA = DescribeMember(baseA, rotA, xzA, intendedA, jitterA, posB, model);
+            FacingPairMember memberB = DescribeMember(baseB, rotB, xzB, intendedB, jitterB, posA, model);
+            if (memberA.facingErrorDegrees > settings.facingToleranceDegrees ||
+                memberB.facingErrorDegrees > settings.facingToleranceDegrees ||
+                memberA.angleToPartnerDegrees > jitter + settings.facingToleranceDegrees ||
+                memberB.angleToPartnerDegrees > jitter + settings.facingToleranceDegrees)
+            {
+                Count(rejections, "facing outside tolerance");
+                continue;
+            }
+
+            FacingPairLink bSupportsA = FacingPairFormations.EvaluateLink(baseB, baseA, crossfireRanges, model);
+            FacingPairLink aSupportsB = FacingPairFormations.EvaluateLink(baseA, baseB, crossfireRanges, model);
+            if (!bSupportsA.EngagesAtFront || !aSupportsB.EngagesAtFront)
+            {
+                Count(rejections, "front position out of band (" +
+                    (bSupportsA.EngagesAtFront ? aSupportsB.statusAtFront : bSupportsA.statusAtFront) + ")");
+                continue;
+            }
+
+            // Mixed pairs: both front distances must lie in the overlapping band
+            // (identical to the own-band test for same-level pairs).
+            if (bSupportsA.distanceToFront < overlapMin || bSupportsA.distanceToFront > overlapMax ||
+                aSupportsB.distanceToFront < overlapMin || aSupportsB.distanceToFront > overlapMax)
+            {
+                Count(rejections, "front position outside overlapping band");
+                continue;
+            }
+
+            // Stage 2b.1: the new corridor may not contain another formation's
+            // member or cross another formation's reserved corridor. (Members
+            // in earlier corridors are already rejected by the land checks.)
+            List<FormationCorridorSegment> corridor =
+                FacingPairFormations.BuildCorridor(formationId, memberA, memberB, settings, model);
+            string corridorConflict = NewCorridorConflict(corridor);
+            if (corridorConflict != null)
+            {
+                Count(rejections, corridorConflict);
+                continue;
+            }
+
+            FacingPairRecord record = new FacingPairRecord
+            {
+                formationId = formationId,
+                memberA = memberA,
+                memberB = memberB,
+                mixedLevel = requestA.level != requestB.level,
+                windowMinimum = windowMin,
+                windowMaximum = windowMax,
+                overlapBandMinimum = overlapMin,
+                overlapBandMaximum = overlapMax,
+                requestedSpacing = spacing,
+                horizontalDistance = new Vector2(posB.x - posA.x, posB.z - posA.z).magnitude,
+                centreDistance3D = Vector3.Distance(posA, posB),
+                heightDifference = posB.y - posA.y,
+                bSupportsA = bSupportsA,
+                aSupportsB = aSupportsB,
+                attempts = attempt,
+                rejectionSummary = SummariseRejections(rejections),
+                corridor = corridor
+            };
+
+            if (!TryCommitFormationMember(requestA, posA, rotA, rectA, record, true, out string failA))
+            {
+                Count(rejections, "A: " + failA);
+                continue;
+            }
+
+            if (!TryCommitFormationMember(requestB, posB, rotB, rectB, record, false, out string failB))
+            {
+                RollBackLastFormationMember(requestA);
+                Count(rejections, "B: " + failB);
+                continue;
+            }
+
+            ReserveCorridor(corridor, memberA.baseId, memberB.baseId);
+            return record;
+        }
+
+        Debug.LogWarning(
+            $"BaseSpawner: {formationId} could not place {BuildBaseId(requestA)} + " +
+            $"{BuildBaseId(requestB)} after {settings.attemptsPerPair} attempts. " +
+            SummariseRejections(rejections),
+            this);
+        return null;
+    }
+
+    // Real land checks (bounds, river/rail clearance, terrain footprint,
+    // flatness, slope, pivot spacing, footprint and corridor clearance) for
+    // an exact XZ and intended horizontal heading. No UnityEngine.Random use.
+    private bool TryEvaluateFormationPose(
+        BaseRequest request,
+        Vector3 worldXZ,
+        float intendedHeading,
+        out Vector3 position,
+        out Quaternion rotation,
+        out FootprintRect footprintRect,
+        out string rejectReason)
+    {
+        position = Vector3.zero;
+        rotation = Quaternion.identity;
+        footprintRect = default(FootprintRect);
+
+        if (!InsideBounds(worldXZ.x - transform.position.x, worldXZ.z - transform.position.z))
+        {
+            rejectReason = "outside world bounds";
+            return false;
+        }
+
+        if (!TryPassLandSiteChecks(request.prefab, worldXZ, out PrefabFootprint footprint, out rejectReason))
+        {
+            return false;
+        }
+
+        return TryEvaluateLandPose(
+            request.baseName,
+            request.index,
+            request.prefab,
+            footprint,
+            worldXZ,
+            YawForHeading(request.prefab, intendedHeading),
+            false,
+            out position,
+            out rotation,
+            out footprintRect,
+            out rejectReason);
+    }
+
+    // Yaw passed to placement (applied as prefabRotation * Euler(0, yaw, 0))
+    // whose horizontal forward (local +Z) points along the given heading.
+    private static float YawForHeading(GameObject prefab, float heading)
+    {
+        Quaternion prefabRotation = prefab.transform.rotation;
+        float yaw = heading - FacingPairFormations.HeadingDegrees(
+            CrossfireGeometry.HorizontalForward(prefabRotation));
+        for (int i = 0; i < 4; i++)
+        {
+            float actual = FacingPairFormations.HeadingDegrees(
+                CrossfireGeometry.HorizontalForward(prefabRotation * Quaternion.Euler(0f, yaw, 0f)));
+            float error = Mathf.DeltaAngle(actual, heading);
+            if (Mathf.Abs(error) < 1e-4f) break;
+            yaw += error;
+        }
+
+        return Mathf.Repeat(yaw, 360f);
+    }
+
+    private static FacingPairMember DescribeMember(
+        CrossfireBase self,
+        Quaternion rotation,
+        Vector3 inputXZ,
+        float intendedHeading,
+        float jitter,
+        Vector3 partnerPosition,
+        CrossfireAttackModel model)
+    {
+        return new FacingPairMember
+        {
+            baseId = self.baseId,
+            baseType = self.baseType,
+            level = self.level,
+            position = self.centre,
+            placementInputXZ = inputXZ,
+            yawDegrees = rotation.eulerAngles.y,
+            forwardHeadingDegrees = FacingPairFormations.HeadingDegrees(self.forward),
+            intendedHeadingDegrees = intendedHeading,
+            yawJitterDegrees = jitter,
+            facingErrorDegrees = FacingPairFormations.HorizontalAngle(
+                self.forward, CrossfireGeometry.ForwardFromYaw(intendedHeading)),
+            angleToPartnerDegrees = FacingPairFormations.HorizontalAngle(
+                self.forward, partnerPosition - self.centre),
+            frontAttackPosition = CrossfireGeometry.FrontAttackPosition(self, model, 0f)
+        };
+    }
+
+    private void ReserveLandFootprint(Vector3 position, FootprintRect rect)
+    {
+        placedPositions.Add(position);
+        if (footprintAwareSpacing && rect.valid)
+        {
+            rect.clearance = landFootprintClearance;
+            placedFootprints.Add(rect);
+        }
+    }
+
+    private void TrimPlaced(int positionCount, int footprintCount)
+    {
+        if (placedPositions.Count > positionCount)
+            placedPositions.RemoveRange(positionCount, placedPositions.Count - positionCount);
+        if (placedFootprints.Count > footprintCount)
+            placedFootprints.RemoveRange(footprintCount, placedFootprints.Count - footprintCount);
+    }
+
+    // ---- Stage 2c inward-facing clusters ------------------------------------
+    // Placed after facing pairs (when on) with the real land checks; members
+    // never reuse a pair member, never enter a reserved corridor, and their
+    // approach strips must be clear of every footprint and reserved strip.
+    // Private SplitMix64 streams; UnityEngine.Random is saved and restored.
+    private HashSet<BaseRequest> PlaceStrategicClusters(
+        List<BaseRequest> requests,
+        Dictionary<string, int> spawnedByType,
+        HashSet<BaseRequest> alreadyPlaced)
+    {
+        HashSet<BaseRequest> placed = new HashSet<BaseRequest>();
+
+        if (!assignBaseLevels)
+        {
+            Debug.LogWarning("BaseSpawner: Strategic clusters need assignBaseLevels; no cluster was placed.", this);
+            return placed;
+        }
+
+        string rangeError = "missing";
+        if (crossfireRanges == null || !crossfireRanges.Validate(out rangeError))
+        {
+            Debug.LogWarning("BaseSpawner: Strategic clusters skipped, invalid Flak range table: " + rangeError, this);
+            return placed;
+        }
+
+        CrossfireAttackModel model = crossfireAttackModel ?? CrossfireAttackModel.CreateProvisional();
+        ClusterSettings settings = clusterSettings ?? new ClusterSettings();
+        FormationPlannerSettings eligibility = formationPlannerSettings ?? new FormationPlannerSettings();
+
+        if (settings.reserveApproaches && !footprintAwareSpacing)
+        {
+            Debug.LogWarning(
+                "BaseSpawner: cluster approach reservation needs footprintAwareSpacing; strips are recorded but not enforced.",
+                this);
+        }
+
+        Dictionary<string, BaseRequest> requestById = new Dictionary<string, BaseRequest>(StringComparer.Ordinal);
+        Dictionary<GameObject, bool> frontByPrefab = new Dictionary<GameObject, bool>();
+        List<FormationCandidate> candidates = new List<FormationCandidate>(requests.Count);
+        HashSet<string> excluded = new HashSet<string>(StringComparer.Ordinal);
+        foreach (BaseRequest request in requests)
+        {
+            if (!frontByPrefab.TryGetValue(request.prefab, out bool hasFront))
+            {
+                hasFront = PrefabHasDefensiveFront(request.prefab);
+                frontByPrefab[request.prefab] = hasFront;
+            }
+
+            string id = BuildBaseId(request);
+            requestById[id] = request;
+            if (alreadyPlaced != null && alreadyPlaced.Contains(request)) excluded.Add(id);
+            candidates.Add(new FormationCandidate
+            {
+                baseId = id,
+                baseType = request.baseName,
+                level = request.level,
+                hasLevel = request.hasLevel,
+                isRouteBase = request.placement != PlacementType.Land,
+                hasDefensiveFront = hasFront
+            });
+        }
+
+        SortedDictionary<string, int> exclusions = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        List<FormationCandidate> pool = ClusterFormations.SelectPool(
+            seed, candidates, eligibility, settings, excluded, out List<int> memberCounts, exclusions);
+
+        if (lastFormationPlan == null)
+        {
+            lastFormationPlan = new FormationPlan { seed = seed, scToUnity = crossfireRanges.ScToUnity };
+        }
+
+        FormationRandom rng = new FormationRandom(seed, ClusterFormations.PlacementSalt);
+        Random.State savedRandomState = Random.state;
+        int cursor = 0;
+        List<string> unfilled = new List<string>();
+        try
+        {
+            for (int k = 0; k < memberCounts.Count; k++)
+            {
+                string formationId = $"FORM_CLUSTER_{lastClusters.Count + 1:000}";
+                int n = memberCounts[k];
+                ClusterRecord record = null;
+                int substitutions = 0;
+                string lastFailure = "no eligible members left";
+                while (record == null && cursor + n <= pool.Count)
+                {
+                    List<BaseRequest> members = new List<BaseRequest>(n);
+                    for (int i = 0; i < n; i++) members.Add(requestById[pool[cursor + i].baseId]);
+                    cursor += n;
+
+                    record = TryPlaceCluster(formationId, members, settings, model, rng, out lastFailure);
+                    if (record != null)
+                    {
+                        record.memberSubstitutions = substitutions;
+                        foreach (BaseRequest m in members) placed.Add(m);
+                    }
+                    else if (++substitutions > settings.maxMemberSubstitutions)
+                    {
+                        break;
+                    }
+                }
+
+                if (record == null)
+                {
+                    unfilled.Add($"{formationId} ({n} members): {lastFailure}");
+                    continue;
+                }
+
+                lastClusters.Add(record);
+                lastFormationPlan.formations.Add(BuildClusterSpec(record));
+                foreach (ClusterMemberRecord m in record.members)
+                {
+                    spawnedByType[m.baseType] = spawnedByType.TryGetValue(m.baseType, out int c) ? c + 1 : 1;
+                }
+            }
+        }
+        finally
+        {
+            Random.state = savedRandomState;
+        }
+
+        lastFormationPlan.unfilledFormations += unfilled.Count;
+        string clusterReport = ClusterFormations.BuildReport(
+            seed, crossfireRanges.ScToUnity, model, settings, memberCounts, pool.Count,
+            lastClusters, exclusions, unfilled);
+        lastFormationReport = lastFormationReport == null ? clusterReport : lastFormationReport + "\n" + clusterReport;
+
+        if (unfilled.Count > 0)
+        {
+            Debug.LogWarning(
+                $"BaseSpawner: {unfilled.Count} of {memberCounts.Count} cluster(s) could not be placed; " +
+                "their members were placed by the ordinary rules. " + string.Join(" | ", unfilled),
+                this);
+        }
+
+        return placed;
+    }
+
+    private ClusterRecord TryPlaceCluster(
+        string formationId,
+        List<BaseRequest> requests,
+        ClusterSettings settings,
+        CrossfireAttackModel model,
+        FormationRandom rng,
+        out string failure)
+    {
+        int n = requests.Count;
+        List<BaseLevel> levels = new List<BaseLevel>(n);
+        foreach (BaseRequest r in requests) levels.Add(r.level);
+
+        if (!ClusterFormations.TryGetSharedBand(levels, crossfireRanges, out float bandMin, out float bandMax) ||
+            !ClusterFormations.TryGetRadiusWindow(n, bandMin, bandMax, model.FrontAttackDistance, out float rMin, out float rMax))
+        {
+            failure = "member levels have no shared engagement band / radius window";
+            return null;
+        }
+
+        float lo = rMin + settings.radiusEdgeMargin;
+        float hi = rMax - settings.radiusEdgeMargin;
+        if (lo > hi) lo = hi = 0.5f * (rMin + rMax);
+
+        float halfX = mapSizeX / 2f - edgePadding;
+        float halfZ = mapSizeZ / 2f - edgePadding;
+        float step = 360f / n;
+        Dictionary<string, int> rejections = new Dictionary<string, int>();
+
+        Vector3[] xz = new Vector3[n];
+        float[] slotAngle = new float[n];
+        float[] radius = new float[n];
+        float[] intended = new float[n];
+        float[] yawJitter = new float[n];
+        Vector3[] pos = new Vector3[n];
+        Quaternion[] rot = new Quaternion[n];
+        FootprintRect[] rect = new FootprintRect[n];
+
+        for (int attempt = 1; attempt <= settings.attemptsPerCluster; attempt++)
+        {
+            // Fixed draw order per attempt.
+            float r0 = rng.Range(lo, hi);
+            float cx = rng.Range(-halfX, halfX);
+            float cz = rng.Range(-halfZ, halfZ);
+            float rotation = rng.Range(0f, 360f);
+            Vector3 centre = new Vector3(transform.position.x + cx, 0f, transform.position.z + cz);
+            for (int i = 0; i < n; i++)
+            {
+                float aj = rng.Range(-settings.maxAngleJitterDegrees, settings.maxAngleJitterDegrees);
+                float rj = rng.Range(-settings.maxRadialJitter, settings.maxRadialJitter);
+                yawJitter[i] = rng.Range(-settings.maxYawJitterDegrees, settings.maxYawJitterDegrees);
+                slotAngle[i] = Mathf.Repeat(rotation + i * step + aj, 360f);
+                radius[i] = r0 + rj;
+                xz[i] = centre + CrossfireGeometry.ForwardFromYaw(slotAngle[i]) * radius[i];
+                intended[i] = Mathf.Repeat(slotAngle[i] + 180f + yawJitter[i], 360f);
+            }
+
+            // Real land checks, each member against everything placed so far
+            // plus the members before it.
+            int positionMark = placedPositions.Count;
+            int footprintMark = placedFootprints.Count;
+            string reason = null;
+            for (int i = 0; i < n && reason == null; i++)
+            {
+                if (!TryEvaluateFormationPose(requests[i], xz[i], intended[i],
+                        out pos[i], out rot[i], out rect[i], out string why))
+                {
+                    reason = "member: " + why;
+                    break;
+                }
+
+                ReserveLandFootprint(pos[i], rect[i]);
+            }
+
+            TrimPlaced(positionMark, footprintMark);
+            if (reason != null)
+            {
+                Count(rejections, reason);
+                continue;
+            }
+
+            Vector3 seatedCentre = centre;
+            float meanY = 0f;
+            for (int i = 0; i < n; i++) meanY += pos[i].y;
+            seatedCentre.y = meanY / n;
+
+            List<ClusterMemberRecord> members = new List<ClusterMemberRecord>(n);
+            List<CrossfireBase> bases = new List<CrossfireBase>(n);
+            bool facingOk = true;
+            for (int i = 0; i < n; i++)
+            {
+                CrossfireBase b = CrossfireBase.FromPose(
+                    BuildBaseId(requests[i]), requests[i].baseName, requests[i].level, pos[i], rot[i], true);
+                bases.Add(b);
+                ClusterMemberRecord m = new ClusterMemberRecord
+                {
+                    baseId = b.baseId,
+                    baseType = b.baseType,
+                    level = b.level,
+                    slotIndex = i,
+                    position = b.centre,
+                    placementInputXZ = xz[i],
+                    yawDegrees = rot[i].eulerAngles.y,
+                    forwardHeadingDegrees = FacingPairFormations.HeadingDegrees(b.forward),
+                    intendedHeadingDegrees = intended[i],
+                    yawJitterDegrees = yawJitter[i],
+                    facingErrorDegrees = FacingPairFormations.HorizontalAngle(
+                        b.forward, CrossfireGeometry.ForwardFromYaw(intended[i])),
+                    angleToCentreDegrees = FacingPairFormations.HorizontalAngle(b.forward, centre - b.centre),
+                    slotAngleDegrees = slotAngle[i],
+                    radius = new Vector2(b.centre.x - centre.x, b.centre.z - centre.z).magnitude,
+                    frontAttackPosition = CrossfireGeometry.FrontAttackPosition(b, model, 0f)
+                };
+                members.Add(m);
+                if (m.facingErrorDegrees > settings.facingToleranceDegrees ||
+                    m.angleToCentreDegrees > settings.maxYawJitterDegrees + settings.facingToleranceDegrees)
+                {
+                    facingOk = false;
+                }
+            }
+
+            if (!facingOk)
+            {
+                Count(rejections, "facing outside tolerance");
+                continue;
+            }
+
+            // Actual crossfire: every front needs minSupportersPerFront OTHER
+            // members inside their own min..max band (full 3D).
+            List<ClusterTarget> targets = ClusterFormations.EvaluateSupport(bases, crossfireRanges, model);
+            int minSupport = int.MaxValue;
+            string weakStatus = null;
+            foreach (ClusterTarget t in targets)
+            {
+                if (t.supportersAtFront < minSupport)
+                {
+                    minSupport = t.supportersAtFront;
+                    foreach (ClusterSupport s in t.candidates)
+                        if (!s.EngagesAtFront) { weakStatus = s.statusAtFront.ToString(); break; }
+                }
+            }
+
+            if (minSupport < settings.minSupportersPerFront)
+            {
+                Count(rejections, "front supported by " + minSupport + " < " + settings.minSupportersPerFront +
+                    " (" + (weakStatus ?? "?") + ")");
+                continue;
+            }
+
+            // Approach strips: clear of every placed footprint (pairs, earlier
+            // clusters), of this cluster's other members, and of every
+            // reserved corridor / strip of another formation.
+            List<FormationCorridorSegment> strips =
+                ClusterFormations.BuildApproachStrips(formationId, members, settings, model);
+            string stripConflict = NewCorridorConflict(strips);
+            if (stripConflict == null)
+            {
+                for (int s = 0; s < strips.Count && stripConflict == null; s++)
+                {
+                    FootprintRect sr = CorridorRect(strips[s]);
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (strips[s].kind == "approach " + members[i].baseId) continue;
+                        if (rect[i].valid && RectsOverlapXZ(sr, rect[i]))
+                        {
+                            stripConflict = "approach blocked by own cluster member";
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (stripConflict != null)
+            {
+                Count(rejections, stripConflict);
+                continue;
+            }
+
+            ClusterRecord record = new ClusterRecord
+            {
+                formationId = formationId,
+                members = members,
+                centre = seatedCentre,
+                requestedRadius = r0,
+                radiusWindowMinimum = rMin,
+                radiusWindowMaximum = rMax,
+                rotationDegrees = rotation,
+                sharedBandMinimum = bandMin,
+                sharedBandMaximum = bandMax,
+                targets = targets,
+                minimumSupportersAtFront = minSupport,
+                approachStrips = strips,
+                attempts = attempt,
+                rejectionSummary = SummariseRejections(rejections)
+            };
+
+            int committed = 0;
+            string commitFailure = null;
+            for (int i = 0; i < n; i++)
+            {
+                if (!TryCommitClusterMember(requests[i], pos[i], rot[i], rect[i], record, i, out commitFailure)) break;
+                committed++;
+            }
+
+            if (committed < n)
+            {
+                for (int i = committed - 1; i >= 0; i--) RollBackLastFormationMember(requests[i]);
+                Count(rejections, "commit: " + commitFailure);
+                continue;
+            }
+
+            string[] ids = new string[n];
+            for (int i = 0; i < n; i++) ids[i] = members[i].baseId;
+            ReserveCorridor(strips, ids);
+            failure = null;
+            return record;
+        }
+
+        failure = $"no valid pose in {settings.attemptsPerCluster} attempts ({SummariseRejections(rejections)})";
+        Debug.LogWarning($"BaseSpawner: {formationId} could not place {string.Join(" + ", requests.Select(BuildBaseId))}: {failure}", this);
+        return null;
+    }
+
+    private bool TryCommitClusterMember(
+        BaseRequest request, Vector3 position, Quaternion rotation, FootprintRect rect,
+        ClusterRecord record, int index, out string failure)
+    {
+        PlacementValidation validation = default(PlacementValidation);
+        validation.rejectReason = string.Empty;
+        validation.baseRect = rect;
+
+        if (!TryInstantiateRequest(request, new Pose(position, rotation), validation, out failure))
+        {
+            return false;
+        }
+
+        ReserveLandFootprint(position, rect);
+        lastPlacements.Add(validation);
+
+        Transform instance = transform.Find($"GeneratedBase_{request.baseName}_{request.index:000}");
+        if (instance != null)
+        {
+            FormationMemberInfo info = instance.GetComponent<FormationMemberInfo>();
+            if (info == null) info = instance.gameObject.AddComponent<FormationMemberInfo>();
+            info.InitializeCluster(record, index);
+        }
+
+        return true;
+    }
+
+    private static FormationSpec BuildClusterSpec(ClusterRecord record)
+    {
+        FormationSpec spec = new FormationSpec
+        {
+            formationId = record.formationId,
+            kind = FormationKind.Cluster,
+            arrangement = ClusterArrangement.RadialInward,
+            spacingUnity = record.requestedRadius,
+            geometryResolved = true
+        };
+
+        Quaternion toLocal = Quaternion.Euler(0f, -record.rotationDegrees, 0f);
+        foreach (ClusterMemberRecord m in record.members)
+        {
+            Vector3 local = toLocal * new Vector3(m.position.x - record.centre.x, 0f, m.position.z - record.centre.z);
+            spec.members.Add(new FormationMember
+            {
+                baseId = m.baseId,
+                baseType = m.baseType,
+                level = m.level,
+                role = m.slotIndex == 0 ? FormationRole.Anchor : FormationRole.Supporter,
+                slotIndex = m.slotIndex,
+                localOffset = new Vector2(local.x, local.z),
+                localYawDegrees = Mathf.Repeat(m.forwardHeadingDegrees - record.rotationDegrees, 360f)
+            });
+        }
+
+        foreach (ClusterTarget t in record.targets)
+            foreach (ClusterSupport s in t.candidates)
+            {
+                spec.supportLinks.Add(new FormationSupportLink
+                {
+                    supporterBaseId = s.supporterBaseId,
+                    defendedBaseId = t.defendedBaseId,
+                    engagesAtFrontPosition = s.EngagesAtFront,
+                    coverage = new List<ApproachInterval>(s.coverage),
+                    distanceToFrontPosition = s.distanceToFront,
+                    statusAtFrontPosition = s.statusAtFront
+                });
+            }
+
+        return spec;
+    }
+
+    // ---- Stage 2b.1 corridor reservation -----------------------------------
+
+    private const string CorridorRejectReason = "footprint inside reserved formation corridor";
+
+    private static FootprintRect CorridorRect(FormationCorridorSegment segment)
+    {
+        return new FootprintRect
+        {
+            valid = true,
+            center = segment.Center,
+            size = new Vector3(segment.width, 0f, segment.Length),
+            rotation = Quaternion.Euler(0f, segment.HeadingDegrees, 0f),
+            clearance = 0f
+        };
+    }
+
+    private static bool RectsOverlapXZ(FootprintRect a, FootprintRect b)
+    {
+        if (DistanceXZ(a.center, b.center) > FootprintCircumRadius(a) + FootprintCircumRadius(b))
+        {
+            return false;
+        }
+
+        return FootprintsOverlapXZ(a.center, a.size, a.rotation, b.center, b.size, b.rotation);
+    }
+
+    // Null when the footprint is clear of every reserved corridor strip.
+    // A formation member may touch its own pair's corridor (ownBaseId).
+    private string ReservedCorridorConflict(FootprintRect footprint, string ownBaseId)
+    {
+        if (reservedCorridors.Count == 0 || !footprint.valid)
+        {
+            return null;
+        }
+
+        foreach (ReservedCorridor corridor in reservedCorridors)
+        {
+            if (ownBaseId != null && Array.IndexOf(corridor.members, ownBaseId) >= 0)
+            {
+                continue;
+            }
+
+            if (RectsOverlapXZ(footprint, corridor.rect))
+            {
+                return CorridorRejectReason;
+            }
+        }
+
+        return null;
+    }
+
+    // A candidate pair's corridor may not contain any footprint placed so far
+    // (formation members of earlier pairs) or overlap an earlier corridor.
+    private string NewCorridorConflict(List<FormationCorridorSegment> corridor)
+    {
+        foreach (FormationCorridorSegment segment in corridor)
+        {
+            FootprintRect rect = CorridorRect(segment);
+            foreach (FootprintRect placed in placedFootprints)
+            {
+                if (RectsOverlapXZ(rect, placed)) return "corridor blocked by another formation member";
+            }
+
+            foreach (ReservedCorridor other in reservedCorridors)
+            {
+                if (RectsOverlapXZ(rect, other.rect)) return "corridor crosses another formation corridor";
+            }
+        }
+
+        return null;
+    }
+
+    private void ReserveCorridor(List<FormationCorridorSegment> corridor, params string[] members)
+    {
+        foreach (FormationCorridorSegment segment in corridor)
+        {
+            reservedCorridors.Add(new ReservedCorridor
+            {
+                rect = CorridorRect(segment),
+                formationId = segment.formationId,
+                members = members
+            });
+        }
+    }
+
+    // Instantiates a validated formation member exactly like an ordinary land
+    // base and reserves its position and footprint.
+    private bool TryCommitFormationMember(
+        BaseRequest request,
+        Vector3 position,
+        Quaternion rotation,
+        FootprintRect rect,
+        FacingPairRecord record,
+        bool isMemberA,
+        out string failure)
+    {
+        PlacementValidation validation = default(PlacementValidation);
+        validation.rejectReason = string.Empty;
+        validation.baseRect = rect;
+
+        if (!TryInstantiateRequest(request, new Pose(position, rotation), validation, out failure))
+        {
+            return false;
+        }
+
+        ReserveLandFootprint(position, rect);
+        lastPlacements.Add(validation);
+
+        Transform instance = transform.Find($"GeneratedBase_{request.baseName}_{request.index:000}");
+        if (instance != null)
+        {
+            FormationMemberInfo info = instance.GetComponent<FormationMemberInfo>();
+            if (info == null) info = instance.gameObject.AddComponent<FormationMemberInfo>();
+            info.Initialize(record, isMemberA);
+        }
+
+        return true;
+    }
+
+    private void RollBackLastFormationMember(BaseRequest request)
+    {
+        Transform instance = transform.Find($"GeneratedBase_{request.baseName}_{request.index:000}");
+        if (instance != null) DestroyTemporary(instance.gameObject);
+        if (placedPositions.Count > 0) placedPositions.RemoveAt(placedPositions.Count - 1);
+        if (footprintAwareSpacing && placedFootprints.Count > 0) placedFootprints.RemoveAt(placedFootprints.Count - 1);
+        if (lastPlacements.Count > 0) lastPlacements.RemoveAt(lastPlacements.Count - 1);
+        string id = BuildBaseId(request);
+        int last = generatedBaseRecords.Count - 1;
+        if (last >= 0 && generatedBaseRecords[last].baseId == id) generatedBaseRecords.RemoveAt(last);
+    }
+
+    private static FormationSpec BuildFacingPairSpec(FacingPairRecord record)
+    {
+        FormationSpec spec = new FormationSpec
+        {
+            formationId = record.formationId,
+            kind = FormationKind.FacingPair,
+            spacingUnity = record.horizontalDistance,
+            geometryResolved = true
+        };
+
+        spec.members.Add(new FormationMember
+        {
+            baseId = record.memberA.baseId,
+            baseType = record.memberA.baseType,
+            level = record.memberA.level,
+            role = FormationRole.Anchor,
+            slotIndex = 0,
+            localOffset = new Vector2(0f, -record.horizontalDistance * 0.5f),
+            localYawDegrees = record.memberA.yawJitterDegrees
+        });
+        spec.members.Add(new FormationMember
+        {
+            baseId = record.memberB.baseId,
+            baseType = record.memberB.baseType,
+            level = record.memberB.level,
+            role = FormationRole.Partner,
+            slotIndex = 1,
+            localOffset = new Vector2(0f, record.horizontalDistance * 0.5f),
+            localYawDegrees = Mathf.Repeat(180f + record.memberB.yawJitterDegrees, 360f)
+        });
+
+        foreach (FacingPairLink l in new[] { record.bSupportsA, record.aSupportsB })
+        {
+            spec.supportLinks.Add(new FormationSupportLink
+            {
+                supporterBaseId = l.supporterBaseId,
+                defendedBaseId = l.defendedBaseId,
+                engagesAtFrontPosition = l.EngagesAtFront,
+                coverage = new List<ApproachInterval>(l.coverage),
+                distanceToFrontPosition = l.distanceToFront,
+                statusAtFrontPosition = l.statusAtFront
+            });
+        }
+
+        return spec;
+    }
+
+    private static void Count(Dictionary<string, int> counts, string reason)
+    {
+        string key = string.IsNullOrEmpty(reason) ? "rejected" : reason;
+        int paren = key.IndexOf(" (", StringComparison.Ordinal);
+        if (paren > 0 && !key.StartsWith("front", StringComparison.Ordinal)) key = key.Substring(0, paren);
+        counts[key] = counts.TryGetValue(key, out int n) ? n + 1 : 1;
+    }
+
+    private static string SummariseRejections(Dictionary<string, int> counts)
+    {
+        return counts.Count == 0
+            ? "none"
+            : string.Join(", ", counts.OrderByDescending(p => p.Value)
+                .ThenBy(p => p.Key, StringComparer.Ordinal)
+                .Select(p => $"{p.Key} x{p.Value}"));
+    }
+
+    /// <summary>
+    /// A base has a defined defensive front when its prefab carries the
+    /// "Base Flaks" group (the same source as turretFacingLocal). The Tank
+    /// prefab has none, so Tank bases are excluded from formations.
+    /// </summary>
+    private static bool PrefabHasDefensiveFront(GameObject prefab)
+    {
+        return prefab != null &&
+               FindChildRecursive(prefab.transform, "Base Flaks") != null;
+    }
+
     private static uint CreateRouteSamplingSeed(
         int generationSeed,
         string baseName,
@@ -1509,6 +2906,7 @@ public class BaseSpawner : MonoBehaviour
                 }
 
                 pose = new Pose(landPosition, landRotation);
+                validation.baseRect = pendingLandFootprint;
                 return true;
         }
     }
@@ -1553,6 +2951,14 @@ public class BaseSpawner : MonoBehaviour
                 rejectReason = "main base instantiation failed";
                 DestroyTemporary(generatedRoot);
                 return false;
+            }
+
+            // Spawn-time scale (instance only; the prefab asset is untouched).
+            // Skipped entirely at scale 1 so the previous path is unchanged.
+            if (baseSpawnScale != 1f)
+            {
+                baseInstance.transform.localScale =
+                    request.prefab.transform.localScale * baseSpawnScale;
             }
 
             baseInstance.name = isRoutePair
@@ -1620,6 +3026,28 @@ public class BaseSpawner : MonoBehaviour
                 BuildBaseId(request),
                 $"{request.baseName} Base");
 
+            if (request.hasLevel)
+            {
+                GeneratedBaseRecord record = new GeneratedBaseRecord
+                {
+                    baseId = BuildBaseId(request),
+                    baseType = request.baseName,
+                    level = request.level,
+                    position = basePose.position,
+                    yawDegrees = basePose.rotation.eulerAngles.y
+                };
+
+                BaseLevelInfo levelInfo =
+                    controller.GetComponent<BaseLevelInfo>();
+                if (levelInfo == null)
+                {
+                    levelInfo = controller.gameObject.AddComponent<BaseLevelInfo>();
+                }
+
+                levelInfo.Initialize(record);
+                generatedBaseRecords.Add(record);
+            }
+
             return true;
         }
         catch (Exception exception)
@@ -1684,13 +3112,18 @@ public class BaseSpawner : MonoBehaviour
 
     private static string BuildBaseId(BaseRequest request)
     {
+        return BuildBaseIdFor(request.baseName, request.index);
+    }
+
+    private static string BuildBaseIdFor(string baseName, int index)
+    {
         string typeId = new string(
-            request.baseName
+            baseName
                 .Where(char.IsLetterOrDigit)
                 .Select(char.ToUpperInvariant)
                 .ToArray());
 
-        return $"BASE_{typeId}_{request.index:000}";
+        return $"BASE_{typeId}_{index:000}";
     }
 
     private bool TryFindLandPlacement(
@@ -1741,6 +3174,51 @@ public class BaseSpawner : MonoBehaviour
             0f,
             transform.position.z + z);
 
+        if (!TryPassLandSiteChecks(
+            prefab,
+            worldXZ,
+            out PrefabFootprint footprint,
+            out rejectReason))
+        {
+            return false;
+        }
+
+        // Every rejection after the yaw draw restores the stream to its
+        // post-XZ state; success keeps the yaw draw (unchanged behaviour).
+        Random.State randomStateBeforeYaw = Random.state;
+        float randomYaw = Random.Range(0f, 360f);
+        if (!TryEvaluateLandPose(
+            variant,
+            requestIndex,
+            prefab,
+            footprint,
+            worldXZ,
+            randomYaw,
+            true,
+            out position,
+            out rotation,
+            out FootprintRect landFootprint,
+            out rejectReason))
+        {
+            Random.state = randomStateBeforeYaw;
+            return false;
+        }
+
+        pendingLandFootprint = landFootprint;
+        return true;
+    }
+
+    // Land-site checks that precede the yaw draw (river, railway, measured
+    // footprint). Does not advance UnityEngine.Random.
+    private bool TryPassLandSiteChecks(
+        GameObject prefab,
+        Vector3 worldXZ,
+        out PrefabFootprint footprint,
+        out string rejectReason)
+    {
+        footprint = default(PrefabFootprint);
+        rejectReason = string.Empty;
+
         // Keep ordinary land bases away from every river (with a single
         // river this is exactly the original riverGenerator check).
         foreach (RiverGenerator river in AllRiverGenerators())
@@ -1774,7 +3252,7 @@ public class BaseSpawner : MonoBehaviour
         Random.State randomStateBeforeFootprintLookup = Random.state;
         bool hasFootprint = TryGetPrefabFootprint(
             prefab,
-            out PrefabFootprint footprint);
+            out footprint);
         Random.state = randomStateBeforeFootprintLookup;
 
         if (!hasFootprint ||
@@ -1789,13 +3267,35 @@ public class BaseSpawner : MonoBehaviour
             return false;
         }
 
+        return true;
+    }
+
+    // Evaluates one exact land pose (world XZ + yaw) with the real placement
+    // checks: terrain-aligned footprint sampling, flatness, slope, pivot
+    // spacing, footprint clearance and river/railway corridor clearance.
+    // Never reads or advances UnityEngine.Random.
+    private bool TryEvaluateLandPose(
+        string variant,
+        int requestIndex,
+        GameObject prefab,
+        PrefabFootprint footprint,
+        Vector3 worldXZ,
+        float yawDegrees,
+        bool recordDiagnostics,
+        out Vector3 position,
+        out Quaternion rotation,
+        out FootprintRect footprintRect,
+        out string rejectReason)
+    {
+        position = Vector3.zero;
+        rejectReason = string.Empty;
+        footprintRect = default(FootprintRect);
+
         // Sample with the candidate's actual renderer bounds and rotation.
         // The terrain-aligned rotation depends on sampled normals, so iterate
         // until the samples and resulting transform agree.
-        Random.State randomStateBeforeYaw = Random.state;
-        float randomYaw = Random.Range(0f, 360f);
         Quaternion authoredRotation =
-            prefab.transform.rotation * Quaternion.Euler(0f, randomYaw, 0f);
+            prefab.transform.rotation * Quaternion.Euler(0f, yawDegrees, 0f);
         rotation = authoredRotation;
         TerrainSampleResult sample = default(TerrainSampleResult);
         TerrainFootprintSnapshot snapshot = default(TerrainFootprintSnapshot);
@@ -1814,14 +3314,13 @@ public class BaseSpawner : MonoBehaviour
                 out snapshot))
             {
                 rejectReason = "no terrain hit";
-                RecordTerrainSamplingComparison(
+                if (recordDiagnostics) RecordTerrainSamplingComparison(
                     variant,
                     "main base",
                     requestIndex,
                     -1,
                     worldXZ,
                     snapshot);
-                Random.state = randomStateBeforeYaw;
                 return false;
             }
 
@@ -1854,18 +3353,17 @@ public class BaseSpawner : MonoBehaviour
                 prefab,
                 "terrain-aligned renderer-footprint sampling did not converge",
                 handledRejection: true);
-            RecordTerrainSamplingComparison(
+            if (recordDiagnostics) RecordTerrainSamplingComparison(
                 variant,
                 "main base",
                 requestIndex,
                 -1,
                 worldXZ,
                 snapshot);
-            Random.state = randomStateBeforeYaw;
             return false;
         }
 
-        RecordTerrainSamplingComparison(
+        if (recordDiagnostics) RecordTerrainSamplingComparison(
             variant,
             "main base",
             requestIndex,
@@ -1873,26 +3371,66 @@ public class BaseSpawner : MonoBehaviour
             worldXZ,
             snapshot);
 
-        if (sample.heightVariation > maxFootprintHeightVariation)
+        if (sample.heightVariation > EffectiveFootprintHeightVariation)
         {
             rejectReason =
                 $"footprint too uneven ({sample.heightVariation:F2} m)";
-            Random.state = randomStateBeforeYaw;
             return false;
         }
 
         if (sample.maxSlopeAngle > maxSlopeAngle)
         {
             rejectReason = $"slope too steep ({sample.maxSlopeAngle:F1} deg)";
-            Random.state = randomStateBeforeYaw;
             return false;
         }
 
         if (IsTooClose(sample.position, minSpacing))
         {
             rejectReason = "too close to another base";
-            Random.state = randomStateBeforeYaw;
             return false;
+        }
+
+        footprintRect = default(FootprintRect);
+        if (footprintAwareSpacing)
+        {
+            FootprintRect landRect = MakeFootprintRect(
+                worldXZ + authoredRotation * footprint.boundsCenter,
+                footprint.boundsSize,
+                authoredRotation);
+
+            string corridorConflict = RouteCorridorFootprintConflict(
+                landRect,
+                landRiverClearance,
+                keepLandBasesOffRailways
+                    ? landRailClearance
+                    : routeCorridorFootprintClearance,
+                null,
+                null);
+            if (corridorConflict != null)
+            {
+                rejectReason = corridorConflict;
+                return false;
+            }
+
+            if (IsFootprintClearanceRejected(landRect, landFootprintClearance))
+            {
+                rejectReason = "footprint too close to another base";
+                return false;
+            }
+
+            // Stage 2b.1 (no-op when no corridor is reserved).
+            if (reservedCorridors.Count > 0)
+            {
+                string reserved = ReservedCorridorConflict(
+                    landRect, BuildBaseIdFor(variant, requestIndex));
+                if (reserved != null)
+                {
+                    rejectReason = reserved;
+                    return false;
+                }
+            }
+
+            footprintRect = landRect;
         }
 
         position = sample.position + sample.normal * surfaceOffset;
@@ -1905,6 +3443,110 @@ public class BaseSpawner : MonoBehaviour
         }
 
         return true;
+    }
+
+    /// <summary>Result of <see cref="ProbeLandPose"/>.</summary>
+    public struct LandPoseProbeResult
+    {
+        public bool accepted;
+        public string rejectReason;
+        /// <summary>Seated, terrain-aligned root position the base would get.</summary>
+        public Vector3 position;
+        public Quaternion rotation;
+        public float yawDegrees;
+    }
+
+    /// <summary>
+    /// Stage 2a: tests one proposed land-base pose (world XZ + yaw) with the
+    /// same checks ordinary placement uses (bounds, river/railway clearance,
+    /// terrain footprint flatness and slope, pivot spacing, footprint
+    /// clearance and corridor clearance) against the bases placed so far.
+    /// Nothing is instantiated or recorded, diagnostics counters are not
+    /// touched and UnityEngine.Random is left exactly as it was.
+    ///
+    /// Route bases (naval/rail) are positioned by route sampling with their
+    /// hangar over water / on the track, so they cannot be probed here.
+    ///
+    /// Stage 2b.1: reserved facing-pair corridors also reject the pose. Pass
+    /// the base's own request index (e.g. 70 for BASE_AIR_070) to exempt the
+    /// corridor of the pair that base belongs to; the default (-1) treats every
+    /// corridor as foreign, as for a new base.
+    /// </summary>
+    public bool ProbeLandPose(
+        string baseType,
+        Vector3 worldPosition,
+        float yawDegrees,
+        out LandPoseProbeResult result,
+        BaseLevel? level = null,
+        int requestIndex = -1)
+    {
+        result = new LandPoseProbeResult { yawDegrees = yawDegrees, rejectReason = string.Empty };
+
+        BaseEntry entry = baseEntries?.FirstOrDefault(e => e != null && e.baseName == baseType);
+        if (entry == null || entry.prefab == null)
+        {
+            result.rejectReason = $"unknown base type '{baseType}'";
+            return false;
+        }
+
+        if (entry.placement != PlacementType.Land)
+        {
+            result.rejectReason = "route base: placed by route sampling, not probeable as land";
+            return false;
+        }
+
+        GameObject prefab = entry.prefab;
+        if (level.HasValue && levelVisualSet != null)
+        {
+            GameObject replacement = levelVisualSet.Resolve(baseType, level.Value);
+            if (replacement != null) prefab = replacement;
+        }
+
+        if (measuredFootprintScale != baseSpawnScale)
+        {
+            baseFootprintCache.Clear();
+            navalAnchorCache.Clear();
+            railAnchorCache.Clear();
+            measuredFootprintScale = baseSpawnScale;
+        }
+
+        Random.State randomState = Random.state;
+        try
+        {
+            float x = worldPosition.x - transform.position.x;
+            float z = worldPosition.z - transform.position.z;
+            if (!InsideBounds(x, z))
+            {
+                result.rejectReason = "outside world bounds";
+                return false;
+            }
+
+            Vector3 worldXZ = new Vector3(worldPosition.x, 0f, worldPosition.z);
+            if (!TryPassLandSiteChecks(prefab, worldXZ, out PrefabFootprint footprint, out string siteReject))
+            {
+                result.rejectReason = siteReject;
+                return false;
+            }
+
+            result.accepted = TryEvaluateLandPose(
+                baseType,
+                requestIndex,
+                prefab,
+                footprint,
+                worldXZ,
+                yawDegrees,
+                false,
+                out result.position,
+                out result.rotation,
+                out FootprintRect _,
+                out string poseReject);
+            result.rejectReason = result.accepted ? string.Empty : poseReject;
+            return result.accepted;
+        }
+        finally
+        {
+            Random.state = randomState;
+        }
     }
 
     private static bool TryGetRouteSample(
@@ -2085,6 +3727,15 @@ public class BaseSpawner : MonoBehaviour
         Vector3 hangarRootPosition =
             routePoint - rotation * anchor.boundsCenter;
         hangarRootPosition.y += surfaceOffset;
+        if (baseSpawnScale != 1f)
+        {
+            // The visible centre sits surfaceOffset above the (unscaled)
+            // track, which at scale 1 rests the hangar's underside on the
+            // rail bed. Keep that underside height when the hangar is scaled
+            // instead of sinking its extra half-height into the ground.
+            hangarRootPosition.y +=
+                anchor.boundsSize.y * 0.5f * (1f - 1f / baseSpawnScale);
+        }
         Vector3 hangarWorld =
             hangarRootPosition + rotation * anchor.boundsCenter;
         Quaternion hangarWorldRotation = rotation * anchor.localRotation;
@@ -2114,7 +3765,7 @@ public class BaseSpawner : MonoBehaviour
         // deliberate gap, rather than at a fixed distance from the tracks.
         float baseCenterDistance =
             hangarHalfAcrossTrack + baseHalfAcrossTrack +
-            railBaseHangarClearance;
+            railBaseHangarClearance * baseSpawnScale;
         Vector3 baseGeometryCenter =
             routePoint + bankSide * baseCenterDistance;
         baseGeometryCenter.y = 0f;
@@ -2152,7 +3803,7 @@ public class BaseSpawner : MonoBehaviour
             return false;
         }
 
-        if (hangarTerrain.heightVariation > maxFootprintHeightVariation)
+        if (hangarTerrain.heightVariation > EffectiveFootprintHeightVariation)
         {
             validation.rejectReason =
                 $"hangar footprint too uneven ({hangarTerrain.heightVariation:F2} m)";
@@ -2188,7 +3839,7 @@ public class BaseSpawner : MonoBehaviour
             return false;
         }
 
-        if (sample.heightVariation > maxFootprintHeightVariation)
+        if (sample.heightVariation > EffectiveFootprintHeightVariation)
         {
             validation.rejectReason = $"footprint too uneven ({sample.heightVariation:F2} m)";
             return false;
@@ -2226,6 +3877,44 @@ public class BaseSpawner : MonoBehaviour
         {
             validation.rejectReason = "too close to another route hangar";
             return false;
+        }
+
+        FootprintRect railBaseRect = default(FootprintRect);
+        FootprintRect railHangarRect = default(FootprintRect);
+        if (footprintAwareSpacing)
+        {
+            railBaseRect = MakeFootprintRect(
+                baseGeometryCenter, baseFootprint.boundsSize, baseRotation);
+            railHangarRect = MakeFootprintRect(
+                hangarWorld, anchor.boundsSize, rotation);
+
+            string corridorConflict = RouteCorridorFootprintConflict(
+                railBaseRect,
+                routeCorridorFootprintClearance,
+                routeCorridorFootprintClearance,
+                null,
+                CurrentRail);
+            if (corridorConflict != null)
+            {
+                validation.rejectReason = corridorConflict;
+                return false;
+            }
+
+            if (IsFootprintClearanceRejected(railBaseRect, routeFootprintClearance) ||
+                IsFootprintClearanceRejected(railHangarRect, routeFootprintClearance))
+            {
+                validation.rejectReason = "footprint too close to another base";
+                return false;
+            }
+
+            // Stage 2b.1 (no-op when no corridor is reserved).
+            if (reservedCorridors.Count > 0 &&
+                (ReservedCorridorConflict(railBaseRect, null) != null ||
+                 ReservedCorridorConflict(railHangarRect, null) != null))
+            {
+                validation.rejectReason = CorridorRejectReason;
+                return false;
+            }
         }
 
         // The hangar must be centred on the track (within tolerance).
@@ -2270,13 +3959,16 @@ public class BaseSpawner : MonoBehaviour
         validation.hangarWorldRotation = hangarWorldRotation;
         validation.hangarRootPosition = hangarRootPosition;
         validation.hangarRootRotation = rotation;
-        validation.hangarRootScale = 1f;
+        validation.hangarRootScale = baseSpawnScale;
         validation.hangarRouteDistance = hangarDistance;
         validation.rootRouteDistance = rootDistance;
         validation.rootPosition = position;
         validation.rootRotation = baseRotation;
         validation.footprintHeightVariation = sample.heightVariation;
         validation.footprintMaxSlope = sample.maxSlopeAngle;
+        validation.baseRect = railBaseRect;
+        validation.hasHangarRect = railHangarRect.valid;
+        validation.hangarRect = railHangarRect;
 
         pose = new Pose(position, baseRotation);
 
@@ -2490,7 +4182,7 @@ public class BaseSpawner : MonoBehaviour
         // Naval Hangar height (0.074 m) the 0.05 m setting sank 68% of the
         // model. Cap the draught to a fraction of the hangar's own height.
         float hangarDraught = Mathf.Min(
-            navalWaterlineOffset,
+            navalWaterlineOffset * TerrainToleranceScale,
             anchor.boundsSize.y * MaxNavalHangarDraughtFraction);
         hangarRootPosition.y =
             routePoint.y - hangarDraught - hangarBottomLocalY;
@@ -2513,7 +4205,7 @@ public class BaseSpawner : MonoBehaviour
         // Place the base beyond the hangar's landward edge using measured
         // extents, with a gap no larger than one measured hangar length.
         float baseHangarClearance = Mathf.Min(
-            navalBankPadClearance,
+            navalBankPadClearance * baseSpawnScale,
             anchor.trackAxisLength);
         float baseCenterDistance =
             hangarCenterOffset + hangarHalfAlongBank + baseHalfAlongBank +
@@ -2555,7 +4247,7 @@ public class BaseSpawner : MonoBehaviour
             return false;
         }
 
-        if (sample.heightVariation > maxFootprintHeightVariation)
+        if (sample.heightVariation > EffectiveFootprintHeightVariation)
         {
             validation.rejectReason = $"footprint too uneven ({sample.heightVariation:F2} m)";
             return false;
@@ -2617,7 +4309,7 @@ public class BaseSpawner : MonoBehaviour
         float hangarDistance = DistanceXZ(hangarWorld, routePoint);
         float hangarMinRouteSpacing = Mathf.Max(
             routeBaseMinSpacing,
-            hangarHalfAlongRoute * 2f + navalBankPadClearance);
+            hangarHalfAlongRoute * 2f + navalBankPadClearance * baseSpawnScale);
         if (IsNavalHangarSpacingRejected(
             hangarWorld,
             anchor.boundsSize,
@@ -2629,6 +4321,44 @@ public class BaseSpawner : MonoBehaviour
         {
             validation.rejectReason = "too close to another route hangar";
             return false;
+        }
+
+        FootprintRect navalBaseRect = default(FootprintRect);
+        FootprintRect navalHangarRect = default(FootprintRect);
+        if (footprintAwareSpacing)
+        {
+            navalBaseRect = MakeFootprintRect(
+                sample.position, baseFootprint.boundsSize, baseRotation);
+            navalHangarRect = MakeFootprintRect(
+                hangarWorld, anchor.boundsSize, hangarRotation);
+
+            string corridorConflict = RouteCorridorFootprintConflict(
+                navalBaseRect,
+                routeCorridorFootprintClearance,
+                routeCorridorFootprintClearance,
+                CurrentRiver,
+                null);
+            if (corridorConflict != null)
+            {
+                validation.rejectReason = corridorConflict;
+                return false;
+            }
+
+            if (IsFootprintClearanceRejected(navalBaseRect, routeFootprintClearance) ||
+                IsFootprintClearanceRejected(navalHangarRect, routeFootprintClearance))
+            {
+                validation.rejectReason = "footprint too close to another base";
+                return false;
+            }
+
+            // Stage 2b.1 (no-op when no corridor is reserved).
+            if (reservedCorridors.Count > 0 &&
+                (ReservedCorridorConflict(navalBaseRect, null) != null ||
+                 ReservedCorridorConflict(navalHangarRect, null) != null))
+            {
+                validation.rejectReason = CorridorRejectReason;
+                return false;
+            }
         }
 
         // The hangar must be over water: its centre within the river
@@ -2689,7 +4419,7 @@ public class BaseSpawner : MonoBehaviour
         validation.hangarWorldRotation = hangarWorldRotation;
         validation.hangarRootPosition = hangarRootPosition;
         validation.hangarRootRotation = hangarRotation;
-        validation.hangarRootScale = 1f;
+        validation.hangarRootScale = baseSpawnScale;
         validation.localRiverWidth = localRiverWidth;
         validation.riverNarrowingTaperHalfDistance = 0f;
         validation.hangarWaterOverlapFraction = hangarWaterOverlapFraction;
@@ -2703,6 +4433,9 @@ public class BaseSpawner : MonoBehaviour
         validation.navalHangarFootprintSize = anchor.boundsSize;
         validation.footprintHeightVariation = sample.heightVariation;
         validation.footprintMaxSlope = sample.maxSlopeAngle;
+        validation.baseRect = navalBaseRect;
+        validation.hasHangarRect = navalHangarRect.valid;
+        validation.hangarRect = navalHangarRect;
 
         pose = new Pose(position, baseRotation);
 
@@ -2817,15 +4550,16 @@ public class BaseSpawner : MonoBehaviour
 
         DestroyTemporary(temporary);
 
+        // Hangar geometry at spawn scale (see TryGetPrefabFootprint).
         anchor = new PrefabAnchor
         {
-            localPosition = localPosition,
+            localPosition = localPosition * baseSpawnScale,
             localRotation = localRotation,
-            localScale = localScale,
-            boundsCenter = boundsCenterLocal,
-            boundsSize = boundsSizeLocal,
+            localScale = localScale * baseSpawnScale,
+            boundsCenter = boundsCenterLocal * baseSpawnScale,
+            boundsSize = boundsSizeLocal * baseSpawnScale,
             trackAxisLocal = trackAxisLocal,
-            trackAxisLength = trackAxisLength,
+            trackAxisLength = trackAxisLength * baseSpawnScale,
             hasRenderer = hasRenderer
         };
 
@@ -2915,6 +4649,12 @@ public class BaseSpawner : MonoBehaviour
         }
 
         DestroyTemporary(temporary);
+
+        // Express the footprint at spawn scale (instances are scaled about
+        // their pivot, so root-local offsets scale linearly). Multiplying by
+        // exactly 1 leaves the previous values bit-identical.
+        boundsCenter *= baseSpawnScale;
+        boundsSize *= baseSpawnScale;
 
         footprint = new PrefabFootprint
         {
@@ -3681,7 +5421,7 @@ public class BaseSpawner : MonoBehaviour
             return "no-hit";
         }
 
-        if (snapshot.heightVariation > maxFootprintHeightVariation)
+        if (snapshot.heightVariation > EffectiveFootprintHeightVariation)
         {
             return "uneven";
         }
@@ -4354,6 +6094,113 @@ public class BaseSpawner : MonoBehaviour
             : 0f;
         Vector2 closest = start + segment * t;
         return (point - closest).sqrMagnitude;
+    }
+
+    // ------------------------------------------------------------------
+    // Stage 1 footprint-aware spacing (only used when footprintAwareSpacing)
+    // ------------------------------------------------------------------
+
+    private static FootprintRect MakeFootprintRect(
+        Vector3 geometryCenter,
+        Vector3 size,
+        Quaternion rotation)
+    {
+        // Horizontal footprint uses yaw only; a terrain tilt of up to
+        // maxBaseTiltAngle only shrinks the projection, so this is conservative.
+        Vector3 forward = rotation * Vector3.forward;
+        forward.y = 0f;
+        float yaw = forward.sqrMagnitude > 1e-8f
+            ? Mathf.Atan2(forward.x, forward.z) * Mathf.Rad2Deg
+            : 0f;
+
+        return new FootprintRect
+        {
+            valid = true,
+            center = new Vector3(geometryCenter.x, 0f, geometryCenter.z),
+            size = new Vector3(size.x, 0f, size.z),
+            rotation = Quaternion.Euler(0f, yaw, 0f)
+        };
+    }
+
+    // Round platforms: the disc inscribed in the measured bounds.
+    private static float FootprintDiscRadius(FootprintRect rect)
+    {
+        return Mathf.Max(rect.size.x, rect.size.z) * 0.5f;
+    }
+
+    private static float FootprintCircumRadius(FootprintRect rect)
+    {
+        return 0.5f * Mathf.Sqrt(rect.size.x * rect.size.x + rect.size.z * rect.size.z);
+    }
+
+    private bool IsFootprintClearanceRejected(FootprintRect candidate, float clearance)
+    {
+        if (!footprintAwareSpacing || !candidate.valid)
+        {
+            return false;
+        }
+
+        float candidateRadius = FootprintCircumRadius(candidate);
+        foreach (FootprintRect placed in placedFootprints)
+        {
+            float required = Mathf.Max(clearance, placed.clearance);
+            if (DistanceXZ(candidate.center, placed.center) >
+                candidateRadius + FootprintCircumRadius(placed) + required)
+            {
+                continue;
+            }
+
+            if (FootprintEdgeGapXZ(
+                    candidate.center,
+                    candidate.size,
+                    candidate.rotation,
+                    placed.center,
+                    placed.size,
+                    placed.rotation) < required)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Distance from a main-base disc edge to every river/railway corridor,
+    // optionally skipping the base's own route (validated by its own rules).
+    private string RouteCorridorFootprintConflict(
+        FootprintRect baseRect,
+        float riverClearance,
+        float railClearance,
+        RiverGenerator skipRiver,
+        RailGenerator skipRail)
+    {
+        if (!footprintAwareSpacing || !baseRect.valid)
+        {
+            return null;
+        }
+
+        float radius = FootprintDiscRadius(baseRect);
+        foreach (RiverGenerator river in AllRiverGenerators())
+        {
+            if (river == null || river == skipRiver) continue;
+            if (RouteDistanceXZ(river.GeneratedRoute, baseRect.center) - radius <
+                river.RiverWidth * 0.5f + riverClearance)
+            {
+                return "footprint too close to river";
+            }
+        }
+
+        foreach (RailGenerator rail in AllRailGenerators())
+        {
+            if (rail == null || rail == skipRail) continue;
+            if (RouteDistanceXZ(rail.GeneratedRoute, baseRect.center) - radius <
+                rail.RailCorridorHalfWidth + railClearance)
+            {
+                return "footprint too close to railway";
+            }
+        }
+
+        return null;
     }
 
     private bool IsTooClose(

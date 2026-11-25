@@ -428,6 +428,15 @@ MonoBehaviour:
   generateOnStart: 0
   attemptsPerBase: 2000
   showDiagnosticGizmos: 1
+  baseSpawnScale: 6.5
+  scaleTerrainTolerancesWithBase: 1
+  footprintAwareSpacing: 1
+  landFootprintClearance: 4
+  routeFootprintClearance: 2
+  routeCorridorFootprintClearance: 0.5
+  assignBaseLevels: 1
+  levelTargetCounts: 3b0000003a0000003a0000003b0000003a0000003a000000
+  levelVisualSet: {fileID: 0}
 --- !u!4 &70804366
 Transform:
   m_ObjectHideFlags: 0
