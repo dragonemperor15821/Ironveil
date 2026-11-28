@@ -1,18 +1,4 @@
-using System;
 using UnityEngine;
-
-/// <summary>Resources needed to build one Flak (display only; nothing is deducted yet).</summary>
-[Serializable]
-public struct FlakBuildCost
-{
-    [Tooltip("The turret number this price applies to (2..28).")]
-    public int turretNumber;
-    public int concrete;
-    public int iron;
-    public int aluminium;
-    [Tooltip("Construction duration in seconds.")]
-    public int durationSeconds;
-}
 
 /// <summary>
 /// Base Management Menu: data for the "Build Additional Flaks" option
@@ -20,9 +6,10 @@ public struct FlakBuildCost
 /// Assets/UI/Resources/IronveilFlakBuildOption.asset and references the
 /// official artwork Assets/IRONVEIL/UI/Flak/Level 1 Base Flak.png.
 ///
-/// One pricing table is shared by all nine base types. The default prices
-/// are PLACEHOLDERS until the real values are supplied; edit them in the
-/// asset (the Costs list) without touching code.
+/// Presentation only. Construction prices, build times and the 28-Flak
+/// capacity come from FlakConstructionRules through
+/// BaseConstruction.EvaluateFlakConstruction (the Version 1 schedule shared by
+/// all nine base types); nothing about pricing is stored here.
 /// </summary>
 [CreateAssetMenu(menuName = "IRONVEIL/Flak Build Option", fileName = "IronveilFlakBuildOption")]
 public sealed class FlakBuildOptionConfig : ScriptableObject
@@ -40,54 +27,15 @@ public sealed class FlakBuildOptionConfig : ScriptableObject
     [Tooltip("Gap between the artwork and the painted cell edge, as a fraction of the cell height.")]
     [Range(0f, 0.3f)] public float cellPadding = 0.08f;
 
+    [Header("Click")]
+    [Tooltip("After a construction is started, further clicks on the same base are ignored for this long (unscaled seconds), so a double click never starts two.")]
+    [Min(0f)] public float clickGuardSeconds = 0.35f;
+
     [Header("Hover text")]
     [TextArea(2, 5)]
     public string description =
         "Construct an additional Base Flak turret to reinforce this base's defences. " +
         "Destroyed turrets can be rebuilt; the base falls when its last turret is lost.";
-
-    [Header("Pricing (shared by all base types) - PLACEHOLDER values")]
-    public FlakBuildCost[] costs = CreatePlaceholderCosts();
-
-    /// <summary>Price of building turret <paramref name="turretNumber"/>; false when the table has no entry.</summary>
-    public bool TryGetCost(int turretNumber, out FlakBuildCost cost)
-    {
-        if (costs != null)
-        {
-            for (int i = 0; i < costs.Length; i++)
-            {
-                if (costs[i].turretNumber == turretNumber)
-                {
-                    cost = costs[i];
-                    return true;
-                }
-            }
-        }
-
-        cost = default;
-        return false;
-    }
-
-    /// <summary>Placeholder table for turrets 2..28 (rising linearly). Replace with the real prices.</summary>
-    public static FlakBuildCost[] CreatePlaceholderCosts()
-    {
-        FlakBuildCost[] table = new FlakBuildCost[BaseFlakRoster.MaxFlaks - 1];
-        for (int i = 0; i < table.Length; i++)
-        {
-            int n = i + 2;
-            int step = n - 2;
-            table[i] = new FlakBuildCost
-            {
-                turretNumber = n,
-                concrete = 400 + 100 * step,
-                iron = 250 + 75 * step,
-                aluminium = 100 + 50 * step,
-                durationSeconds = 60 + 15 * step
-            };
-        }
-
-        return table;
-    }
 
     /// <summary>"45s", "2m 30s", "1h 05m".</summary>
     public static string FormatDuration(int seconds)
@@ -102,4 +50,7 @@ public sealed class FlakBuildOptionConfig : ScriptableObject
 
         return $"{seconds / 3600}h {(seconds % 3600) / 60:00}m";
     }
+
+    /// <summary>Remaining time, rounded UP to whole seconds (a countdown never shows 0 before it finishes).</summary>
+    public static string FormatRemaining(double seconds) => FormatDuration((int)System.Math.Ceiling(System.Math.Max(0.0, seconds)));
 }

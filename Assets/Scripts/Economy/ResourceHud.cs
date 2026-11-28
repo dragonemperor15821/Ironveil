@@ -187,6 +187,7 @@ namespace Ironveil.Economy
             {
                 manager.ResourceChanged += OnResourceChanged;
                 manager.LedgerReset += OnLedgerReset;
+                manager.CapacityChanged += OnCapacityChanged;
             }
             RefreshAll();
             return true;
@@ -199,6 +200,7 @@ namespace Ironveil.Economy
             // The manager may already be destroyed (Unity-null); its C# events can still be unsubscribed.
             bound.ResourceChanged -= OnResourceChanged;
             bound.LedgerReset -= OnLedgerReset;
+            bound.CapacityChanged -= OnCapacityChanged;
             bound = null;
         }
 
@@ -206,6 +208,11 @@ namespace Ironveil.Economy
         {
             ResourceEventsReceived++;
             RefreshItem(change.Resource);
+        }
+
+        private void OnCapacityChanged(ResourceCapacityChange change)
+        {
+            RefreshItem(change.Resource); // Stage 8: storage expansion changes the "/ capacity" text
         }
 
         private void OnLedgerReset()

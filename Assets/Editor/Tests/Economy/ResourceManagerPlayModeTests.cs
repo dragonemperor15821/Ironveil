@@ -39,7 +39,7 @@ namespace Ironveil.Economy.Tests
                 Assert.AreEqual("DontDestroyOnLoad", manager.gameObject.scene.name);
                 AssertSingleton(manager, 1);
                 Assert.IsTrue(manager.TryGetBalance(ResourceType.Concrete, out long concrete0));
-                Assert.AreEqual(1_500_000, concrete0);
+                Assert.AreEqual(1_300_000, concrete0);
 
                 // Pause, so scene loads cannot change balances and before/after can be compared exactly.
                 Time.timeScale = 0f;
@@ -53,7 +53,7 @@ namespace Ironveil.Economy.Tests
                 // 7. Paused time does not advance replenishment.
                 for (int i = 0; i < 30; i++) yield return null;
                 Assert.AreEqual(clockAtSpend, ledger.CurrentTime, "Clock must not move while Time.timeScale = 0.");
-                Assert.AreEqual(1_400_000, ledger.GetBalance(ResourceType.Concrete));
+                Assert.AreEqual(1_200_000, ledger.GetBalance(ResourceType.Concrete));
 
                 int forwarded = 0;
                 manager.ResourceChanged += _ => forwarded++;
@@ -92,7 +92,7 @@ namespace Ironveil.Economy.Tests
                 Assert.Greater(observedScaled, 0.0, "Time.deltaTime advanced.");
                 long ticks = (long)Math.Floor(ledgerAdvanced / 5.0);
                 Assert.GreaterOrEqual(ticks, 1);
-                Assert.AreEqual(1_400_000 + ticks * 30_000, ledger.GetBalance(ResourceType.Concrete));
+                Assert.AreEqual(1_200_000 + ticks * 30_000, ledger.GetBalance(ResourceType.Concrete));
                 Assert.AreEqual(800_000 + 2 * ticks * 20_000, ledger.GetBalance(ResourceType.Iron), "Both Iron cycles tick.");
                 Assert.AreEqual(1, ResourceManager.LedgersCreatedThisSession);
             }
@@ -167,7 +167,7 @@ namespace Ironveil.Economy.Tests
 
                 AssertSingleton(manager, 1);
                 Assert.AreSame(ledger, manager.Ledger);
-                Assert.AreEqual(1_499_999, ledger.GetBalance(ResourceType.Concrete));
+                Assert.AreEqual(1_299_999, ledger.GetBalance(ResourceType.Concrete));
                 Assert.AreEqual(1, ledger.GetActiveCycleCount(ResourceType.Concrete));
             }
             finally
@@ -205,7 +205,7 @@ namespace Ironveil.Economy.Tests
             AssertSingleton(manager, 1);
             Assert.AreSame(ledger, manager.Ledger, "Scene switch must not create another ledger.");
             Assert.AreEqual(clock, ledger.CurrentTime, "Replenishment timers must not reset.");
-            Assert.AreEqual(1_400_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_200_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(800_000, ledger.GetBalance(ResourceType.Iron));
             Assert.AreEqual(1, ledger.GetActiveCycleCount(ResourceType.Concrete), "Concrete cycle survives.");
             Assert.AreEqual(2, ledger.GetActiveCycleCount(ResourceType.Iron), "Both Iron cycles survive, not duplicated.");

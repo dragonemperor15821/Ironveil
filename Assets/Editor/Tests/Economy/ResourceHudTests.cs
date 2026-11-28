@@ -76,7 +76,7 @@ namespace Ironveil.Economy.Tests
         [Test]
         public void InitialBalances_AreTheLiveLedgerValues()
         {
-            Assert.AreEqual("1,500,000", Item(ResourceType.Concrete).Value.text);
+            Assert.AreEqual("1,300,000", Item(ResourceType.Concrete).Value.text);
             Assert.AreEqual("900,000", Item(ResourceType.Iron).Value.text);
             Assert.AreEqual("400,000", Item(ResourceType.Aluminium).Value.text);
             Assert.AreEqual("100,000", Item(ResourceType.Fuel).Value.text);
@@ -93,7 +93,7 @@ namespace Ironveil.Economy.Tests
         [Test]
         public void Capacities_AndReplenishmentRates_AreDisplayed()
         {
-            Assert.AreEqual("/ 1,500,000", Item(ResourceType.Concrete).Capacity.text);
+            Assert.AreEqual("/ 1,300,000", Item(ResourceType.Concrete).Capacity.text);
             Assert.AreEqual("/ 900,000", Item(ResourceType.Iron).Capacity.text);
             Assert.AreEqual("/ 400,000", Item(ResourceType.Aluminium).Capacity.text);
             Assert.AreEqual("/ 100,000", Item(ResourceType.Fuel).Capacity.text);
@@ -170,9 +170,9 @@ namespace Ironveil.Economy.Tests
         {
             Assert.IsTrue(manager.TrySpend(ResourceType.Concrete, 300_000));
             ResourceHudItem item = Item(ResourceType.Concrete);
-            Assert.AreEqual("1,200,000", item.Value.text);
-            Assert.AreEqual("/ 1,500,000", item.Capacity.text);
-            Assert.AreEqual(0.8f, item.FillFraction, 1e-5f);
+            Assert.AreEqual("1,000,000", item.Value.text);
+            Assert.AreEqual("/ 1,300,000", item.Capacity.text);
+            Assert.AreEqual(1_000_000f / 1_300_000f, item.FillFraction, 1e-5f);
             Assert.IsFalse(item.IsFull);
             Assert.AreEqual("×1", item.Cycles.text);
             Assert.AreEqual("NEXT 5.0s", item.Status.text);
@@ -192,10 +192,10 @@ namespace Ironveil.Economy.Tests
             manager.Tick(2.5f);
             hud.RefreshCountdowns();
             Assert.AreEqual("NEXT 2.5s", Item(ResourceType.Concrete).Status.text);
-            Assert.AreEqual("1,200,000", Item(ResourceType.Concrete).Value.text);
+            Assert.AreEqual("1,000,000", Item(ResourceType.Concrete).Value.text);
 
             manager.Tick(2.5f);
-            Assert.AreEqual("1,230,000", Item(ResourceType.Concrete).Value.text, "Updated by the Replenished event.");
+            Assert.AreEqual("1,030,000", Item(ResourceType.Concrete).Value.text, "Updated by the Replenished event.");
             hud.RefreshCountdowns();
             Assert.AreEqual("NEXT 5.0s", Item(ResourceType.Concrete).Status.text, "Next tick of the same cycle.");
             Assert.AreEqual("×1", Item(ResourceType.Concrete).Cycles.text);
@@ -250,18 +250,18 @@ namespace Ironveil.Economy.Tests
         {
             manager.TrySpend(ResourceType.Concrete, 500_000);
             manager.TrySpend(ResourceType.Gold, 1_000);
-            Assert.AreEqual("1,000,000", Item(ResourceType.Concrete).Value.text);
+            Assert.AreEqual("800,000", Item(ResourceType.Concrete).Value.text);
 
             Assert.IsTrue(manager.ResetToInitialConfiguration());
             Assert.AreEqual(1, hud.LedgerResetsReceived);
-            Assert.AreEqual("1,500,000", Item(ResourceType.Concrete).Value.text);
+            Assert.AreEqual("1,300,000", Item(ResourceType.Concrete).Value.text);
             Assert.AreEqual("10,000", Item(ResourceType.Gold).Value.text);
             Assert.AreEqual(string.Empty, Item(ResourceType.Concrete).Cycles.text);
             Assert.AreEqual("FULL", Item(ResourceType.Concrete).Status.text);
 
             // Still live against the NEW ledger.
             manager.TrySpend(ResourceType.Concrete, 1);
-            Assert.AreEqual("1,499,999", Item(ResourceType.Concrete).Value.text);
+            Assert.AreEqual("1,299,999", Item(ResourceType.Concrete).Value.text);
         }
 
         // ------------------------------------------------------------ 11. subscriptions
@@ -353,12 +353,12 @@ namespace Ironveil.Economy.Tests
 
             // Querying changes nothing.
             for (int i = 0; i < 5; i++) ledger.TryGetNextReplenishTime(ResourceType.Concrete, out _);
-            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_100_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(2, ledger.GetActiveCycleCount(ResourceType.Concrete));
             Assert.AreEqual(TimeSpan.FromSeconds(3), ledger.CurrentTime);
 
             ledger.Advance(TimeSpan.FromSeconds(2)); // t=5: first cycle ticks, rescheduled to 10
-            Assert.AreEqual(1_330_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_130_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.IsTrue(ledger.TryGetNextReplenishTime(ResourceType.Concrete, out next));
             Assert.AreEqual(TimeSpan.FromSeconds(8), next);
 
@@ -401,7 +401,7 @@ namespace Ironveil.Economy.Tests
         {
             Vector2[] before = hud.Items.Select(i => i.Value.rectTransform.anchoredPosition).ToArray();
             Vector2[] sizes = hud.Items.Select(i => i.Root.sizeDelta).ToArray();
-            manager.TrySpend(ResourceType.Concrete, 1_499_999);
+            manager.TrySpend(ResourceType.Concrete, 1_299_999);
             manager.TrySpend(ResourceType.Iron, 7);
             manager.Tick(1.3f);
             hud.UpdateLayout(false);

@@ -588,6 +588,7 @@ public sealed class WorldGenerationPrototype : MonoBehaviour
             }
 
             GameObject root = child.gameObject;
+            PlayerHomeBase.ReleaseIfUnder(child); // Stage 8B: the old world's Home Base gives up its designation
             root.SetActive(false);
             root.name = RemovedBasePrefix + root.name.Substring(GeneratedBasePrefix.Length);
             child.SetParent(null, true);

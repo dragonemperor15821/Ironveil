@@ -12,6 +12,29 @@ using UnityEngine;
 /// </summary>
 public static class BuildingPlacement
 {
+    /// <summary>
+    /// Stage 8: raised after a building is placed into or removed from a slot: (slot, building type).
+    /// Storage expansion listens for FactoryRefinery changes.
+    /// </summary>
+    public static event System.Action<BuildingSlot, BuildingType> Changed;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticEvents()
+    {
+        Changed = null;
+    }
+
+    private static void RaiseChanged(BuildingSlot slot, BuildingType type)
+    {
+        System.Action<BuildingSlot, BuildingType> handlers = Changed;
+        if (handlers == null) return;
+        foreach (System.Delegate d in handlers.GetInvocationList())
+        {
+            try { ((System.Action<BuildingSlot, BuildingType>)d)(slot, type); }
+            catch (System.Exception e) { Debug.LogException(e); }
+        }
+    }
+
     public static BuildingInstance Place(BuildingSlot slot, BuildingDefinition definition, int buildingLevel)
     {
         if (slot == null || definition == null || slot.IsOccupied || !slot.Accepts(definition.Type))
@@ -36,6 +59,7 @@ public static class BuildingPlacement
         BuildingInstance instance = go.AddComponent<BuildingInstance>();
         instance.Initialize(definition, buildingLevel, slot);
         slot.SetOccupant(instance);
+        RaiseChanged(slot, definition.Type);
         return instance;
     }
 
@@ -47,6 +71,7 @@ public static class BuildingPlacement
         }
 
         GameObject go = slot.Occupant.gameObject;
+        BuildingType type = slot.Occupant.Type;
         slot.ClearOccupant();
         if (Application.isPlaying)
         {
@@ -56,5 +81,7 @@ public static class BuildingPlacement
         {
             Object.DestroyImmediate(go);
         }
+
+        RaiseChanged(slot, type);
     }
 }

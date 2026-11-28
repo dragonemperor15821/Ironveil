@@ -119,7 +119,7 @@ namespace Ironveil.Economy.Tests
 
             var expected = new Dictionary<ResourceType, long>
             {
-                { ResourceType.Concrete, 1_500_000 }, { ResourceType.Iron, 900_000 },
+                { ResourceType.Concrete, 1_300_000 }, { ResourceType.Iron, 900_000 },
                 { ResourceType.Aluminium, 400_000 }, { ResourceType.Fuel, 100_000 },
                 { ResourceType.Gold, 10_000 }, { ResourceType.Economy, 1_000 }, { ResourceType.Military, 1_000 },
             };
@@ -132,7 +132,7 @@ namespace Ironveil.Economy.Tests
             Assert.IsFalse(m.IsConfigured(ResourceType.GroupLimit));
             Assert.IsFalse(m.TryGetCapacity(ResourceType.Economy, out _));
             Assert.IsTrue(m.TryGetCapacity(ResourceType.Concrete, out long cap));
-            Assert.AreEqual(1_500_000, cap);
+            Assert.AreEqual(1_300_000, cap);
         }
 
         // ------------------------------------------------------------ 3 / 4 / 10. single manager, single ledger, idempotent
@@ -166,7 +166,7 @@ namespace Ironveil.Economy.Tests
             Assert.AreSame(ledger, m.Ledger, "The live ledger must never be replaced by a bootstrap.");
             Assert.AreEqual(ledgersBefore + 1, ResourceManager.LedgersCreatedThisSession, "Exactly one ledger created.");
             Assert.AreEqual(1, Object.FindObjectsByType<ResourceManager>(FindObjectsInactive.Include).Length);
-            Assert.AreEqual(1_400_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_200_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(1, ledger.GetActiveCycleCount(ResourceType.Concrete));
             Assert.AreEqual(TimeSpan.FromSeconds(2), ledger.CurrentTime, "Timers are not reset.");
         }
@@ -284,7 +284,7 @@ namespace Ironveil.Economy.Tests
             m.TrySpend(ResourceType.Concrete, 100_000);
             for (int i = 0; i < 1_000; i++) m.Tick(delta);
             Assert.AreEqual(TimeSpan.Zero, m.Ledger.CurrentTime);
-            Assert.AreEqual(1_400_000, m.Ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_200_000, m.Ledger.GetBalance(ResourceType.Concrete));
         }
 
         // ------------------------------------------------------------ 11. invalid configuration
@@ -366,7 +366,7 @@ namespace Ironveil.Economy.Tests
             Assert.AreEqual(TimeSpan.Zero, m.Ledger.CurrentTime);
             for (int i = 0; i < ResourceTypeRules.Count; i++)
                 Assert.AreEqual(0, m.Ledger.GetActiveCycleCount((ResourceType)i));
-            Assert.AreEqual(1_500_000, m.Ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000, m.Ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(10_000, m.Ledger.GetBalance(ResourceType.Gold));
 
             // Old ledger is detached; new ledger forwards exactly once.

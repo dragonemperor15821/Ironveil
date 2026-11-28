@@ -51,6 +51,12 @@ namespace Ironveil.Economy
         /// <summary>Raised after <see cref="ResetToInitialConfiguration"/> replaces the ledger. Listeners should re-read every balance.</summary>
         public event Action LedgerReset;
 
+        /// <summary>Raised after a storage capacity of the live ledger changes at runtime (Stage 8 storage expansion).</summary>
+        public event Action<ResourceCapacityChange> CapacityChanged;
+
+        /// <summary>Raised whenever a manager starts using a new ledger (Initialize or ResetToInitialConfiguration).</summary>
+        public static event Action<ResourceManager> LedgerAttached;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetForPlaySession()
         {
@@ -207,6 +213,17 @@ namespace Ironveil.Economy
             return false;
         }
 
+        /// <summary>Changes a storage capacity of the live ledger (see ResourceLedger.TrySetCapacity). Balances are untouched.</summary>
+        public bool TrySetCapacity(ResourceType resource, long capacity, out ResourceTransactionResult result)
+        {
+            if (Ledger == null)
+            {
+                result = ResourceTransactionResult.NotConfigured;
+                return false;
+            }
+            return Ledger.TrySetCapacity(resource, capacity, out result);
+        }
+
         public bool CanSpend(ResourceType resource, long amount) => Ledger != null && Ledger.CanSpend(resource, amount);
 
         public bool TrySpend(ResourceType resource, long amount) => TrySpend(resource, amount, out _);
@@ -226,12 +243,38 @@ namespace Ironveil.Economy
 
         private void SetLedger(ResourceLedger ledger)
         {
-            if (Ledger != null) Ledger.Changed -= ForwardChange;
+            if (Ledger != null)
+            {
+                Ledger.Changed -= ForwardChange;
+                Ledger.CapacityChanged -= ForwardCapacityChange;
+            }
             Ledger = ledger;
             if (ledger == null) return;
 
             ledger.Changed += ForwardChange; // exactly one subscription per ledger
+            ledger.CapacityChanged += ForwardCapacityChange;
             LedgersCreatedThisSession++;
+
+            Action<ResourceManager> attached = LedgerAttached;
+            if (attached != null)
+            {
+                foreach (Delegate d in attached.GetInvocationList())
+                {
+                    try { ((Action<ResourceManager>)d)(this); }
+                    catch (Exception e) { Debug.LogException(e, this); }
+                }
+            }
+        }
+
+        private void ForwardCapacityChange(ResourceCapacityChange change)
+        {
+            Action<ResourceCapacityChange> handlers = CapacityChanged;
+            if (handlers == null) return;
+            foreach (Delegate d in handlers.GetInvocationList())
+            {
+                try { ((Action<ResourceCapacityChange>)d)(change); }
+                catch (Exception e) { Debug.LogException(e, this); }
+            }
         }
 
         private void ForwardChange(ResourceChange change)

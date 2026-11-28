@@ -101,7 +101,9 @@ namespace Ironveil.Economy
             if (capacity.HasValue)
             {
                 long cap = capacity.Value;
-                long shown = Math.Min(balance, cap); // the ledger never exceeds capacity; never display beyond it either
+                // Stage 8: after a storage decrease the balance may exceed the limit (excess preserved). Show the real
+                // balance; the bar is clamped full.
+                long shown = balance;
                 SetText(Value, ResourceHudFormat.Amount(shown));
                 SetText(Capacity, ResourceHudFormat.Capacity(cap));
                 IsFull = cap > 0 && shown >= cap;

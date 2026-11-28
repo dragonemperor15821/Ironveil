@@ -102,6 +102,12 @@ public sealed class BaseMenuBootstrap : MonoBehaviour
         {
             gameObject.AddComponent<BaseMenuFlakBuildOption>();
         }
+
+        // Row 1, Box 1: Upgrade Flaks (independent of Box 2 above).
+        if (GetComponent<BaseMenuFlakUpgradeOption>() == null)
+        {
+            gameObject.AddComponent<BaseMenuFlakUpgradeOption>();
+        }
     }
 
     private void Start()

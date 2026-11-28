@@ -18,9 +18,15 @@ MonoBehaviour:
   - level: 1
     prefab: {fileID: 2851795757004129202, guid: a7117640cc68c364c9e22dcab487dbd3, type: 3}
     facingYawOffset: -90
-  - level: 6
+  - level: 2
+    prefab: {fileID: 7663208730791735204, guid: 5b89506d29c936e42b9527e6d14db296, type: 3}
+    facingYawOffset: 0
+  - level: 3
+    prefab: {fileID: 300717158061604931, guid: 6aca80d623f285245887de604db6575f, type: 3}
+    facingYawOffset: 0
+  - level: 4
     prefab: {fileID: 919132149155446097, guid: 39b746d7ee7015d438bccec3b335becf, type: 3}
     facingYawOffset: 0
   instanceScale: 0.05
   maxCount: 28
-  missingLevelsNote: Models present for building levels 1, 6. No models for levels 2, 3, 4, 5. Maximum building level NOT confirmed (levels above 6 unknown). Level 6 = 'L6 Base Turret', the turret used by the original base prefabs. Registration as Flak building level 6 NEEDS CONFIRMATION. L1 model facing offset -90 deg (barrels along local +X); L6 offset 0 (barrels along +Z, original convention).
+  missingLevelsNote: Models present for building levels 1, 2, 3, 4. Maximum building level NOT confirmed (levels above 4 unknown). L1 = 'Level 1 Flak' prefab (barrels along local +X, facing offset -90 deg). L2 = 'Level 2 Flak' prefab (barrels along +Z, offset 0). L3 = 'Level 3 Flak' prefab (barrels along +Z, offset 0). L4 = the existing 'L6 Base Turret' model reused as the final Flak level (barrels along +Z, offset 0). L4 is the approved maximum Flak level (four-level upgrade design); the generic 'not confirmed' wording above does not apply to Flak.

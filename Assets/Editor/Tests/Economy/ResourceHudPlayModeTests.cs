@@ -37,12 +37,12 @@ namespace Ironveil.Economy.Tests
                 Assert.AreEqual(80, hud.Canvas.sortingOrder);
                 Assert.AreEqual(ResourceHudPlacementMode.FullWidthTop, hud.Placement.mode);
                 Assert.IsTrue(hud.Canvas.isActiveAndEnabled && hud.Bar.gameObject.activeInHierarchy);
-                Assert.AreEqual("1,500,000", hud.Items[(int)ResourceType.Concrete].Value.text);
+                Assert.AreEqual("1,300,000", hud.Items[(int)ResourceType.Concrete].Value.text);
                 Assert.AreEqual(1, ResourceHudTests.CountHudHandlers(manager, "ResourceChanged"));
 
                 // Live update after spending in the real scene.
                 manager.TrySpend(ResourceType.Concrete, 250_000);
-                Assert.AreEqual("1,250,000", hud.Items[(int)ResourceType.Concrete].Value.text);
+                Assert.AreEqual("1,050,000", hud.Items[(int)ResourceType.Concrete].Value.text);
                 yield return null;
                 Assert.AreEqual("NEXT 5.0s", hud.Items[(int)ResourceType.Concrete].Status.text, "Paused: countdown holds.");
 

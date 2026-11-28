@@ -114,6 +114,23 @@ namespace Ironveil.Economy
         ExceedsCapacity,
     }
 
+    /// <summary>A storage capacity changed at runtime (ResourceLedger.TrySetCapacity).</summary>
+    public readonly struct ResourceCapacityChange
+    {
+        public ResourceType Resource { get; }
+        public long PreviousCapacity { get; }
+        public long NewCapacity { get; }
+
+        public ResourceCapacityChange(ResourceType resource, long previousCapacity, long newCapacity)
+        {
+            Resource = resource;
+            PreviousCapacity = previousCapacity;
+            NewCapacity = newCapacity;
+        }
+
+        public override string ToString() => $"{Resource} capacity: {PreviousCapacity} -> {NewCapacity}";
+    }
+
     /// <summary>
     /// Plain C# resource ledger. It does not use Unity time, coroutines, timers or threads:
     /// its owner calls <see cref="Advance"/> with elapsed game time.
@@ -144,6 +161,9 @@ namespace Ironveil.Economy
 
         /// <summary>Raised after a balance changes. During <see cref="Advance"/> it is raised at most once per resource, in enum order, after all ticks are applied.</summary>
         public event Action<ResourceChange> Changed;
+
+        /// <summary>Raised after <see cref="TrySetCapacity"/> changes a capacity. Balances are never changed by it.</summary>
+        public event Action<ResourceCapacityChange> CapacityChanged;
 
         /// <summary>
         /// Receives exceptions thrown by <see cref="Changed"/> subscribers. Other subscribers are still notified.
@@ -259,7 +279,8 @@ namespace Ironveil.Economy
             if (!IsConfigured(resource)) return ResourceTransactionResult.NotConfigured;
             long? capacity = _capacities[(int)resource];
             if (!capacity.HasValue) return ResourceTransactionResult.CapacityNotConfigured;
-            // Written as a subtraction so it cannot overflow: balance <= capacity always holds.
+            // Written as a subtraction so it cannot overflow. After a storage decrease the balance may exceed the
+            // capacity (excess preserved); the difference is then negative and every addition is refused.
             if (amount > capacity.Value - _balances[(int)resource]) return ResourceTransactionResult.ExceedsCapacity;
             return ResourceTransactionResult.Success;
         }
@@ -269,8 +290,10 @@ namespace Ironveil.Economy
         public bool TrySpend(ResourceType resource, long amount) => TrySpend(resource, amount, out _);
 
         /// <summary>
-        /// Deducts <paramref name="amount"/> if possible. If the resource replenishes, a successful spend starts a new
-        /// independent cycle and leaves existing cycles unchanged. A rejected spend changes nothing.
+        /// Deducts <paramref name="amount"/> if possible. If the resource replenishes, a successful spend that leaves the
+        /// balance below capacity starts a new independent cycle and leaves existing cycles unchanged. (A spend that
+        /// leaves a preserved excess still at or above a lowered capacity starts none: replenishment resumes only once
+        /// spending brings the balance below the limit.) A rejected spend changes nothing.
         /// </summary>
         public bool TrySpend(ResourceType resource, long amount, out ResourceTransactionResult result)
         {
@@ -281,7 +304,7 @@ namespace Ironveil.Economy
             long previous = _balances[i];
             _balances[i] = previous - amount;
 
-            if (_replenishAmounts[i] > 0)
+            if (_replenishAmounts[i] > 0 && (!_capacities[i].HasValue || _balances[i] < _capacities[i].Value))
                 _cycles[i].Add(_nowTicks + _intervalTicks[i]);
 
             Raise(new ResourceChange(resource, previous, _balances[i], ResourceChangeReason.Spent));
@@ -307,6 +330,52 @@ namespace Ironveil.Economy
                 _cycles[i].Clear();
 
             Raise(new ResourceChange(resource, previous, _balances[i], ResourceChangeReason.Added));
+            return true;
+        }
+
+        /// <summary>
+        /// Stage 8: changes a configured capacity at runtime (storage expansion). Balances are NEVER changed (approved
+        /// storage behaviour):
+        ///  - Decrease: a balance above the new limit is preserved; passive replenishment stops (cycles removed) while
+        ///    the balance is at or above the limit, and resumes once a spend brings it below (see TrySpend). Additions
+        ///    are refused while at or above the limit.
+        ///  - Increase: if the balance is below the new limit and no cycle is running, one replenishment cycle starts
+        ///    now (first tick one interval later), so the store refills without the player spending first. Running
+        ///    cycles are kept.
+        /// A resource whose capacity was not decided (null) cannot be given one here. Setting the current value again is
+        /// a successful no-op without event.
+        /// </summary>
+        public bool TrySetCapacity(ResourceType resource, long capacity, out ResourceTransactionResult result)
+        {
+            if (!IsConfigured(resource)) { result = ResourceTransactionResult.NotConfigured; return false; }
+            if (capacity < 0) { result = ResourceTransactionResult.InvalidAmount; return false; }
+            int i = (int)resource;
+            if (!_capacities[i].HasValue) { result = ResourceTransactionResult.CapacityNotConfigured; return false; }
+
+            result = ResourceTransactionResult.Success;
+            long previous = _capacities[i].Value;
+            if (previous == capacity) return true;
+
+            _capacities[i] = capacity;
+            if (_balances[i] >= capacity)
+                _cycles[i].Clear();
+            else if (_replenishAmounts[i] > 0 && _cycles[i].Count == 0)
+                _cycles[i].Add(_nowTicks + _intervalTicks[i]);
+
+            Action<ResourceCapacityChange> handlers = CapacityChanged;
+            if (handlers != null)
+            {
+                var change = new ResourceCapacityChange(resource, previous, capacity);
+                foreach (Delegate d in handlers.GetInvocationList())
+                {
+                    try { ((Action<ResourceCapacityChange>)d)(change); }
+                    catch (Exception e)
+                    {
+                        try { ListenerExceptionHandler?.Invoke(e); }
+                        catch { /* see Raise */ }
+                    }
+                }
+            }
             return true;
         }
 
@@ -454,7 +523,7 @@ namespace Ironveil.Economy
         {
             return new[]
             {
-                ResourceConfig.Replenishing(ResourceType.Concrete, 1_500_000, 1_500_000, 30_000, PrimaryReplenishInterval),
+                ResourceConfig.Replenishing(ResourceType.Concrete, 1_300_000, 1_300_000, 30_000, PrimaryReplenishInterval), // capacity 1.3M approved 2026-11-28 (was 1.5M); starts full
                 ResourceConfig.Replenishing(ResourceType.Iron, 900_000, 900_000, 20_000, PrimaryReplenishInterval),
                 ResourceConfig.Replenishing(ResourceType.Aluminium, 400_000, 400_000, 10_000, PrimaryReplenishInterval),
                 ResourceConfig.Replenishing(ResourceType.Fuel, 100_000, 100_000, 5_000, PrimaryReplenishInterval),

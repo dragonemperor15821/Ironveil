@@ -785,6 +785,28 @@ public class BaseSpawner : MonoBehaviour
     [SerializeField, Min(0f)]
     private float routeCorridorFootprintClearance = 0.5f;
 
+    [Header("Player Home Base (Stage 8B)")]
+    [Tooltip(
+        "The map's player has a Home Base: after the standard bases are placed, ONE additional Tank Base " +
+        "(the 351st) is placed with the ordinary validated land placement and the Tank entry's prefab, " +
+        "owned by the player and designated as the Home Base (PlayerHomeBase). The standard requests, their " +
+        "order, IDs, levels and random stream are untouched. Off: no Home Base is created.")]
+    [SerializeField]
+    private bool spawnPlayerHomeBase = false;
+
+    /// <summary>Name of the GameObject of the spawned Home Base (keeps the GeneratedBase_ prefix so regeneration clears it).</summary>
+    public const string HomeBaseObjectName = "GeneratedBase_HomeBase";
+    private const string HomeBaseTypeName = "Tank";
+
+    private BaseController lastHomeBase;
+    private string lastHomeBaseFailure;
+
+    public bool SpawnsPlayerHomeBase => spawnPlayerHomeBase;
+    /// <summary>The Home Base spawned by the last GenerateBases, or null.</summary>
+    public BaseController LastHomeBase => lastHomeBase != null ? lastHomeBase : null;
+    /// <summary>Why the last Home Base could not be placed (null when placed or not requested).</summary>
+    public string LastHomeBaseFailure => lastHomeBaseFailure;
+
     [Header("Base Levels")]
     [Tooltip(
         "Assign a deterministic L1-L6 level to every requested base from the " +
@@ -1395,6 +1417,15 @@ public class BaseSpawner : MonoBehaviour
             }
         }
 
+        // Stage 8B: the additional Home Base, strictly after every standard base so their placement, order and
+        // random stream are exactly as before.
+        lastHomeBase = null;
+        lastHomeBaseFailure = null;
+        if (spawnPlayerHomeBase)
+        {
+            PlaceHomeBase();
+        }
+
         Random.state = previousRandomState;
         LogTerrainSamplingComparisonSummary();
 
@@ -1437,7 +1468,12 @@ public class BaseSpawner : MonoBehaviour
         // summary line without creating them; it has been removed.)
         Debug.Log(
             $"IRONVEIL: Spawned {spawned}/{requests.Count} requested " +
-            $"bases. Failed placements: {failed}. {summary}",
+            $"bases. Failed placements: {failed}. {summary}" +
+            (spawnPlayerHomeBase
+                ? (lastHomeBase != null
+                    ? $". Home Base: placed ({PlayerHomeBase.HomeBaseId}, additional Tank Base)"
+                    : $". Home Base: NOT placed ({lastHomeBaseFailure})")
+                : string.Empty),
 
             this);
 
@@ -1618,6 +1654,10 @@ public class BaseSpawner : MonoBehaviour
                 continue;
             }
 
+            // Stage 8B: an old world's Home Base gives up its designation before it is destroyed (Destroy is
+            // deferred in Play Mode), so the new world's Home Base can be designated in the same call.
+            PlayerHomeBase.ReleaseIfUnder(child);
+
             if (Application.isPlaying)
             {
                 Destroy(child.gameObject);
@@ -1627,6 +1667,104 @@ public class BaseSpawner : MonoBehaviour
                 DestroyImmediate(child.gameObject);
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Stage 8B: the player's Home Base, one ADDITIONAL Tank Base. Uses the scene's own Tank entry prefab and the
+    // ordinary validated land placement (TryFindPlacement / TryInstantiateRequest) with the same attempt budget.
+    // No fallback position: if no valid site is found, no Home Base is created and the reason is reported.
+    // It has no Stage 1 base level (BaseLevelInfo is optional; the menu reports none).
+    // ------------------------------------------------------------------
+    private void PlaceHomeBase()
+    {
+        if (PlayerHomeBase.HasHomeBase)
+        {
+            lastHomeBaseFailure = $"the player already has a Home Base ({PlayerHomeBase.Current.BaseId})";
+            Debug.LogWarning("BaseSpawner: " + lastHomeBaseFailure + "; no second Home Base was created.", this);
+            return;
+        }
+
+        BaseEntry tank = baseEntries.FirstOrDefault(e =>
+            e != null && e.baseName == HomeBaseTypeName && e.placement == PlacementType.Land && e.prefab != null);
+        if (tank == null)
+        {
+            lastHomeBaseFailure = "no Tank land entry with a prefab";
+            Debug.LogError("BaseSpawner: Home Base not placed: " + lastHomeBaseFailure + ".", this);
+            return;
+        }
+
+        BaseRequest request = new BaseRequest
+        {
+            baseName = HomeBaseTypeName,
+            prefab = tank.prefab,
+            placement = PlacementType.Land,
+            index = 0,
+        };
+
+        Dictionary<string, int> rejectReasons = new Dictionary<string, int>();
+        for (int attempt = 0; attempt < attemptsPerBase; attempt++)
+        {
+            if (!TryFindPlacement(request, out Pose pose, out PlacementValidation validation))
+            {
+                string reason = string.IsNullOrEmpty(validation.rejectReason) ? "rejected" : validation.rejectReason;
+                rejectReasons[reason] = rejectReasons.TryGetValue(reason, out int n) ? n + 1 : 1;
+                continue;
+            }
+
+            if (!TryInstantiateRequest(request, pose, validation, out string spawnFailure))
+            {
+                rejectReasons[spawnFailure] = rejectReasons.TryGetValue(spawnFailure, out int n) ? n + 1 : 1;
+                continue;
+            }
+
+            // The instantiated root is the newest GeneratedBase_Tank_000 child.
+            Transform root = null;
+            for (int i = transform.childCount - 1; i >= 0; i--)
+            {
+                Transform child = transform.GetChild(i);
+                if (child.name == $"GeneratedBase_{HomeBaseTypeName}_000") { root = child; break; }
+            }
+
+            BaseController controller = root != null ? root.GetComponent<BaseController>() : null;
+            if (controller == null)
+            {
+                rejectReasons["home base controller missing"] = 1;
+                if (root != null) DestroyTemporary(root.gameObject);
+                break;
+            }
+
+            root.name = HomeBaseObjectName;
+            controller.InitializeIdentity(PlayerHomeBase.HomeBaseId, PlayerHomeBase.HomeBaseName);
+            controller.SetOwner(BaseController.PlayerOwnerId);
+            if (!PlayerHomeBase.TryDesignate(controller, out string designationError))
+            {
+                lastHomeBaseFailure = designationError;
+                DestroyTemporary(root.gameObject);
+                Debug.LogError("BaseSpawner: Home Base not designated: " + designationError + ".", this);
+                return;
+            }
+
+            // Reserve its site like any placed land base.
+            placedPositions.Add(pose.position);
+            if (footprintAwareSpacing && validation.baseRect.valid)
+            {
+                FootprintRect placedBase = validation.baseRect;
+                placedBase.clearance = landFootprintClearance;
+                placedFootprints.Add(placedBase);
+            }
+
+            // Not added to lastPlacements: those diagnostics stay aligned with the 350 standard roots.
+            lastHomeBase = controller;
+            if (verboseLogging)
+            {
+                Debug.Log($"BaseSpawner: Home Base placed after {attempt + 1} attempt(s) at {pose.position:F2}.", this);
+            }
+            return;
+        }
+
+        lastHomeBaseFailure = "no valid land site: " + string.Join(", ", rejectReasons.Select(r => $"{r.Key} x{r.Value}"));
+        Debug.LogError("BaseSpawner: Home Base not placed after " + attemptsPerBase + " attempts; no fallback position is used. " +
+                       lastHomeBaseFailure, this);
     }
 
     private void CreateClusters()

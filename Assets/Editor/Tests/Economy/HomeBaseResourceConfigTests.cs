@@ -73,7 +73,7 @@ namespace Ironveil.Economy.Tests
 
         // ------------------------------------------------------------ finalized values
 
-        [TestCase(ResourceType.Concrete, 1_500_000L)]
+        [TestCase(ResourceType.Concrete, 1_300_000L)]
         [TestCase(ResourceType.Iron, 900_000L)]
         [TestCase(ResourceType.Aluminium, 400_000L)]
         [TestCase(ResourceType.Fuel, 100_000L)]
@@ -87,7 +87,7 @@ namespace Ironveil.Economy.Tests
             Assert.AreEqual(expected, asset.CreateLedger().GetBalance(resource));
         }
 
-        [TestCase(ResourceType.Concrete, 1_500_000L)]
+        [TestCase(ResourceType.Concrete, 1_300_000L)]
         [TestCase(ResourceType.Iron, 900_000L)]
         [TestCase(ResourceType.Aluminium, 400_000L)]
         [TestCase(ResourceType.Fuel, 100_000L)]
@@ -232,11 +232,11 @@ namespace Ironveil.Economy.Tests
             ledger.TrySpend(ResourceType.Concrete, 100_000);
             ledger.Advance(TimeSpan.FromSeconds(2));
             ledger.TrySpend(ResourceType.Concrete, 100_000);
-            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_100_000, ledger.GetBalance(ResourceType.Concrete));
             ledger.Advance(TimeSpan.FromSeconds(3));
-            Assert.AreEqual(1_330_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_130_000, ledger.GetBalance(ResourceType.Concrete));
             ledger.Advance(TimeSpan.FromSeconds(2));
-            Assert.AreEqual(1_360_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_160_000, ledger.GetBalance(ResourceType.Concrete));
         }
 
         // ------------------------------------------------------------ no duplication

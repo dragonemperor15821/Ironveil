@@ -404,6 +404,7 @@ MonoBehaviour:
   landFootprintClearance: 4
   routeFootprintClearance: 2
   routeCorridorFootprintClearance: 0.5
+  spawnPlayerHomeBase: 1
   assignBaseLevels: 1
   levelTargetCounts: 3b0000003a0000003a0000003b0000003a0000003a000000i
   levelVisualSet: {fileID: 0}

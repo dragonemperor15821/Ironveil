@@ -106,12 +106,19 @@ public static class ModularFoundationBuilder
         new BuildingSpec { type = BuildingType.Flak, anchorName = null, slotId = null,
             displayName = "Flak", level1PrefabName = "Level 1 Flak",
             level1Fbx = Tripo + "Level 1 Base Flak/futuristic_dual-barrel_turret_3d_model.fbx",
-            higherLevels = new[] { 6 }, higherModels = new[] { Tripo + "L6 Base Turret/mecha_tank_3d_model.fbx" },
+            // Final four-level Flak (Stage 6): L2 = Level 2 Flak prefab (Tripo export 11b3dd5d), L3 = Level 3 Flak prefab
+            // (the former L2, export f96e9d7a), L4 = the existing L6 Base Turret model (reused, not duplicated).
+            // Higher levels get facing offset 0 (all three have barrels along +Z, the slot front axis).
+            higherLevels = new[] { 2, 3, 4 },
+            higherModels = new[] { "Assets/Prefabs/Buildings/Level 2/Level 2 Flak.prefab", "Assets/Prefabs/Buildings/Level 3/Level 3 Flak.prefab", Tripo + "L6 Base Turret/mecha_tank_3d_model.fbx" },
             // L1 barrels run along the model's local +X; the original L6 turret's run along +Z
             // (the existing convention: barrels on the slot/front axis). -90 maps +X onto +Z.
             level1FacingYawOffset = -90f,
-            note = "Level 6 = 'L6 Base Turret', the turret used by the original base prefabs. Registration as Flak building level 6 NEEDS CONFIRMATION. " +
-                   "L1 model facing offset -90 deg (barrels along local +X); L6 offset 0 (barrels along +Z, original convention)." },
+            note = "L1 = 'Level 1 Flak' prefab (barrels along local +X, facing offset -90 deg). " +
+                   "L2 = 'Level 2 Flak' prefab (barrels along +Z, offset 0). " +
+                   "L3 = 'Level 3 Flak' prefab (barrels along +Z, offset 0). " +
+                   "L4 = the existing 'L6 Base Turret' model reused as the final Flak level (barrels along +Z, offset 0). " +
+                   "L4 is the approved maximum Flak level (four-level upgrade design); the generic 'not confirmed' wording above does not apply to Flak." },
         new BuildingSpec { type = BuildingType.ResourceOptimiser, anchorName = "Resource Optimiser", slotId = "ResourceOptimiser",
             displayName = "Resource Optimiser", level1PrefabName = "Level 1 Resource Optimiser",
             level1Fbx = Tripo + "Level 1 Resource Optimiser/tripo_convert_6ea87cd9-3dd9-4424-b433-8ef74ce33aaf.fbx",

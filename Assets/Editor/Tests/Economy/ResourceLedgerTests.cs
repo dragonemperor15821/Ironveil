@@ -21,7 +21,7 @@ namespace Ironveil.Economy.Tests
         public void InitialBalances_MatchHomeBaseProfile()
         {
             var ledger = NewLedger();
-            Assert.AreEqual(1_500_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(900_000, ledger.GetBalance(ResourceType.Iron));
             Assert.AreEqual(400_000, ledger.GetBalance(ResourceType.Aluminium));
             Assert.AreEqual(100_000, ledger.GetBalance(ResourceType.Fuel));
@@ -41,7 +41,7 @@ namespace Ironveil.Economy.Tests
         public void Capacities_MatchProfile_AndUnfinalizedCapacitiesAreUnknown()
         {
             var ledger = NewLedger();
-            Assert.AreEqual(1_500_000, ledger.GetCapacity(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000, ledger.GetCapacity(ResourceType.Concrete));
             Assert.AreEqual(900_000, ledger.GetCapacity(ResourceType.Iron));
             Assert.AreEqual(400_000, ledger.GetCapacity(ResourceType.Aluminium));
             Assert.AreEqual(100_000, ledger.GetCapacity(ResourceType.Fuel));
@@ -79,7 +79,7 @@ namespace Ironveil.Economy.Tests
             Assert.IsTrue(ledger.CanSpend(ResourceType.Concrete, 100_000));
             Assert.IsTrue(ledger.TrySpend(ResourceType.Concrete, 100_000, out var result));
             Assert.AreEqual(ResourceTransactionResult.Success, result);
-            Assert.AreEqual(1_400_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_200_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(1, ledger.GetActiveCycleCount(ResourceType.Concrete));
 
             // The whole balance can be spent; balances never go negative.
@@ -118,7 +118,7 @@ namespace Ironveil.Economy.Tests
             Assert.IsFalse(ledger.CanSpend(ResourceType.Concrete, amount));
             Assert.IsFalse(ledger.TrySpend(ResourceType.Concrete, amount, out var result));
             Assert.AreEqual(ResourceTransactionResult.InvalidAmount, result);
-            Assert.AreEqual(1_500_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(0, ledger.GetActiveCycleCount(ResourceType.Concrete));
 
             Assert.IsFalse(ledger.TryAdd(ResourceType.Gold, amount, out var addResult));
@@ -136,15 +136,15 @@ namespace Ironveil.Economy.Tests
             ledger.TrySpend(ResourceType.Iron, 100_000);     // t=3, ticks at 8, 13, ...
 
             AdvanceSeconds(ledger, 2); // t=5
-            Assert.AreEqual(1_430_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_230_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(800_000, ledger.GetBalance(ResourceType.Iron));
 
             AdvanceSeconds(ledger, 3); // t=8
-            Assert.AreEqual(1_430_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_230_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(820_000, ledger.GetBalance(ResourceType.Iron));
 
             AdvanceSeconds(ledger, 2); // t=10
-            Assert.AreEqual(1_460_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_260_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(820_000, ledger.GetBalance(ResourceType.Iron));
 
             Assert.AreEqual(1, ledger.GetActiveCycleCount(ResourceType.Concrete));
@@ -159,21 +159,21 @@ namespace Ironveil.Economy.Tests
         {
             var ledger = NewLedger();
             ledger.TrySpend(ResourceType.Concrete, 100_000); // t=0
-            Assert.AreEqual(1_400_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_200_000, ledger.GetBalance(ResourceType.Concrete));
 
             AdvanceSeconds(ledger, 2);
             ledger.TrySpend(ResourceType.Concrete, 100_000); // t=2
-            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_100_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(2, ledger.GetActiveCycleCount(ResourceType.Concrete));
 
             AdvanceSeconds(ledger, 3); // t=5: first cycle
-            Assert.AreEqual(1_330_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_130_000, ledger.GetBalance(ResourceType.Concrete));
             AdvanceSeconds(ledger, 2); // t=7: second cycle
-            Assert.AreEqual(1_360_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_160_000, ledger.GetBalance(ResourceType.Concrete));
             AdvanceSeconds(ledger, 3); // t=10: first cycle
-            Assert.AreEqual(1_390_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_190_000, ledger.GetBalance(ResourceType.Concrete));
             AdvanceSeconds(ledger, 2); // t=12: second cycle
-            Assert.AreEqual(1_420_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_220_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(2, ledger.GetActiveCycleCount(ResourceType.Concrete));
         }
 
@@ -230,9 +230,9 @@ namespace Ironveil.Economy.Tests
             var ledger = NewLedger();
             ledger.TrySpend(ResourceType.Concrete, 90_000);
             for (int frame = 0; frame < 299; frame++) ledger.AdvanceSeconds(1.0 / 60.0);
-            Assert.AreEqual(1_410_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_210_000, ledger.GetBalance(ResourceType.Concrete));
             ledger.AdvanceSeconds(1.0 / 60.0); // 300 frames ~= 5 s
-            Assert.AreEqual(1_440_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_240_000, ledger.GetBalance(ResourceType.Concrete));
         }
 
         // ------------------------------------------------------------ 9. removal at capacity
@@ -279,7 +279,7 @@ namespace Ironveil.Economy.Tests
             var ledger = NewLedger();
             ledger.TrySpend(ResourceType.Concrete, 30_000);
             AdvanceSeconds(ledger, 5);
-            Assert.AreEqual(1_500_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(0, ledger.GetActiveCycleCount(ResourceType.Concrete));
 
             AdvanceSeconds(ledger, 2.5); // t=7.5, off the old cycle's 5-second grid
@@ -287,9 +287,9 @@ namespace Ironveil.Economy.Tests
             Assert.AreEqual(1, ledger.GetActiveCycleCount(ResourceType.Concrete));
 
             AdvanceSeconds(ledger, 2.5); // t=10: old cycle would have ticked here, but it is gone
-            Assert.AreEqual(1_440_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_240_000, ledger.GetBalance(ResourceType.Concrete));
             AdvanceSeconds(ledger, 2.5); // t=12.5: fresh cycle's first tick
-            Assert.AreEqual(1_470_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_270_000, ledger.GetBalance(ResourceType.Concrete));
         }
 
         // ------------------------------------------------------------ 11. clamping
@@ -300,7 +300,7 @@ namespace Ironveil.Economy.Tests
             var ledger = NewLedger();
             ledger.TrySpend(ResourceType.Concrete, 10_000); // tick is 30,000
             AdvanceSeconds(ledger, 5);
-            Assert.AreEqual(1_500_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(0, ledger.GetActiveCycleCount(ResourceType.Concrete));
         }
 
@@ -313,7 +313,7 @@ namespace Ironveil.Economy.Tests
             ledger.TrySpend(ResourceType.Concrete, 1_000_000);
             ledger.TrySpend(ResourceType.Iron, 900_000);
             ledger.Advance(TimeSpan.FromHours(10));
-            Assert.AreEqual(1_500_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete));
             Assert.AreEqual(900_000, ledger.GetBalance(ResourceType.Iron));
             Assert.AreEqual(0, ledger.GetActiveCycleCount(ResourceType.Concrete));
             Assert.AreEqual(0, ledger.GetActiveCycleCount(ResourceType.Iron));
@@ -328,12 +328,12 @@ namespace Ironveil.Economy.Tests
             ledger.TrySpend(ResourceType.Concrete, 1);       // second cycle at t=1, phase 6, 11, ...
 
             AdvanceSeconds(ledger, 26); // t=27: cycle A ticks at 5..25 (5), cycle B at 6..26 (5)
-            Assert.AreEqual(1_500_000 - 600_001 + 10 * 30_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000 - 600_001 + 10 * 30_000, ledger.GetBalance(ResourceType.Concrete));
 
             AdvanceSeconds(ledger, 3); // t=30: only cycle A ticks
-            Assert.AreEqual(1_500_000 - 600_001 + 11 * 30_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000 - 600_001 + 11 * 30_000, ledger.GetBalance(ResourceType.Concrete));
             AdvanceSeconds(ledger, 1); // t=31: only cycle B ticks
-            Assert.AreEqual(1_500_000 - 600_001 + 12 * 30_000, ledger.GetBalance(ResourceType.Concrete));
+            Assert.AreEqual(1_300_000 - 600_001 + 12 * 30_000, ledger.GetBalance(ResourceType.Concrete));
         }
 
         [Test]
@@ -343,7 +343,7 @@ namespace Ironveil.Economy.Tests
             for (int run = 0; run < 200; run++)
             {
                 var ledger = NewLedger();
-                var model = new ReferenceModel(1_500_000, 1_500_000, 30_000, FiveSeconds.Ticks);
+                var model = new ReferenceModel(1_300_000, 1_300_000, 30_000, FiveSeconds.Ticks);
 
                 for (int step = 0; step < 40; step++)
                 {
@@ -457,7 +457,7 @@ namespace Ironveil.Economy.Tests
             ledger.TrySpend(ResourceType.Fuel, 999_999); // rejected, no event
             Assert.AreEqual(2, events.Count);
             Assert.AreEqual(new ResourceChange(ResourceType.Iron, 900_000, 860_000, ResourceChangeReason.Spent), events[0]);
-            Assert.AreEqual(new ResourceChange(ResourceType.Concrete, 1_500_000, 1_460_000, ResourceChangeReason.Spent), events[1]);
+            Assert.AreEqual(new ResourceChange(ResourceType.Concrete, 1_300_000, 1_260_000, ResourceChangeReason.Spent), events[1]);
             Assert.AreEqual(-40_000, events[0].Delta);
 
             events.Clear();
@@ -466,7 +466,7 @@ namespace Ironveil.Economy.Tests
 
             AdvanceSeconds(ledger, 1); // both tick; one event per resource, in enum order
             Assert.AreEqual(2, events.Count);
-            Assert.AreEqual(new ResourceChange(ResourceType.Concrete, 1_460_000, 1_490_000, ResourceChangeReason.Replenished), events[0]);
+            Assert.AreEqual(new ResourceChange(ResourceType.Concrete, 1_260_000, 1_290_000, ResourceChangeReason.Replenished), events[0]);
             Assert.AreEqual(new ResourceChange(ResourceType.Iron, 860_000, 880_000, ResourceChangeReason.Replenished), events[1]);
 
             events.Clear();
@@ -495,7 +495,7 @@ namespace Ironveil.Economy.Tests
             Assert.AreEqual(2, before);
             Assert.AreEqual(2, after);
             Assert.AreEqual(2, captured.Count);
-            Assert.AreEqual(1_500_000, ledger.GetBalance(ResourceType.Concrete), "State is committed regardless of listeners.");
+            Assert.AreEqual(1_300_000, ledger.GetBalance(ResourceType.Concrete), "State is committed regardless of listeners.");
 
             ledger.ListenerExceptionHandler = _ => throw new Exception("bad handler");
             Assert.DoesNotThrow(() => ledger.TrySpend(ResourceType.Concrete, 1));

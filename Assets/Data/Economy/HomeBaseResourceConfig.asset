@@ -14,9 +14,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Ironveil.Economy.HomeBaseResourceConfig
   entries:
   - resource: 0
-    startingBalance: 1500000
+    startingBalance: 1300000
     hasCapacity: 1
-    capacity: 1500000
+    capacity: 1300000
     replenishes: 1
     replenishAmount: 30000
     replenishIntervalMilliseconds: 5000
