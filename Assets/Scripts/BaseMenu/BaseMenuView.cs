@@ -70,6 +70,12 @@ public sealed class BaseMenuView : MonoBehaviour, IBaseMenuRegion
     /// <summary>Raised for every intentional left click on a cell or category header.</summary>
     public event Action<CellClick> CellClicked;
 
+    /// <summary>Raised when the pointer enters (true) or leaves (false) a cell or category header.</summary>
+    public event Action<BaseMenuCell, bool> CellHoverChanged;
+
+    /// <summary>The cell under the pointer, or null.</summary>
+    public BaseMenuCell HoveredCell { get; private set; }
+
     /// <summary>True once the canvas and panel were built from a valid skin.</summary>
     public bool IsBuilt { get; private set; }
 
@@ -237,12 +243,14 @@ public sealed class BaseMenuView : MonoBehaviour, IBaseMenuRegion
             if (cells[i] != null)
             {
                 cells[i].Clicked -= OnCellClicked;
+                cells[i].HoverChanged -= OnCellHoverChanged;
                 cells[i].gameObject.SetActive(false);
                 DestroyObject(cells[i].gameObject);
             }
         }
 
         cells.Clear();
+        HoveredCell = null;
         for (int r = 0; r < layout.RowCount; r++)
         {
             BaseMenuRowDefinition row = layout.rows[r];
@@ -286,6 +294,7 @@ public sealed class BaseMenuView : MonoBehaviour, IBaseMenuRegion
         BaseMenuCell cell = cellObject.AddComponent<BaseMenuCell>();
         cell.Configure(row, column, kind, definition, content);
         cell.Clicked += OnCellClicked;
+        cell.HoverChanged += OnCellHoverChanged;
         cells.Add(cell);
     }
 
@@ -528,6 +537,30 @@ public sealed class BaseMenuView : MonoBehaviour, IBaseMenuRegion
         foreach (Action<CellClick> handler in handlers.GetInvocationList())
         {
             try { handler(click); }
+            catch (Exception exception) { Debug.LogException(exception, this); }
+        }
+    }
+
+    private void OnCellHoverChanged(BaseMenuCell cell, bool hovered)
+    {
+        if (hovered)
+        {
+            HoveredCell = cell;
+        }
+        else if (HoveredCell == cell)
+        {
+            HoveredCell = null;
+        }
+
+        Action<BaseMenuCell, bool> handlers = CellHoverChanged;
+        if (handlers == null)
+        {
+            return;
+        }
+
+        foreach (Action<BaseMenuCell, bool> handler in handlers.GetInvocationList())
+        {
+            try { handler(cell, hovered); }
             catch (Exception exception) { Debug.LogException(exception, this); }
         }
     }

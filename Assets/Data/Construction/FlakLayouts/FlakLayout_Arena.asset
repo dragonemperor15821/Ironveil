@@ -1,0 +1,257 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9c73a9874bf706b4bbc65c5aa4d243ff, type: 3}
+  m_Name: FlakLayout_Arena
+  m_EditorClassIdentifier: Assembly-CSharp::FlakDefensiveLayout
+  layoutName: Arena
+  baseTypes:
+  - Heli
+  - Naval
+  - Rail
+  - Heli Naval
+  - Heli Rail
+  sourceParameters:
+    centre: {x: 0, y: 0}
+    innerRadius: 0.53
+    rowSeparation: 0.065
+    chordPitch: 0.06
+    corridorOffset: 0.1
+    clearHalfWidth: 0.145
+    frontLimitZ: 0.49913445
+    flakHalfExtent: 0.025000004
+  instanceScale: 0.05
+  flakFootprint: {x: 0.05000001, y: 0.05000001}
+  positions:
+  - slotId: Flak_R1_01
+    right: 1
+    row: 1
+    index: 1
+    localPosition: {x: 0.253923, y: 0, z: 0.46521294}
+    yawDegrees: 28.62664
+    localRotation: {x: 0, y: 0.24722429, z: 0, w: 0.9689583}
+    constructionOrder: 1
+  - slotId: Flak_L1_01
+    right: 0
+    row: 1
+    index: 1
+    localPosition: {x: -0.253923, y: 0, z: 0.46521294}
+    yawDegrees: -28.626648
+    localRotation: {x: 0, y: -0.24722429, z: 0, w: 0.9689583}
+    constructionOrder: 2
+  - slotId: Flak_R1_02
+    right: 1
+    row: 1
+    index: 2
+    localPosition: {x: 0.30487704, y: 0, z: 0.43353194}
+    yawDegrees: 35.116425
+    localRotation: {x: 0, y: 0.3016746, z: 0, w: 0.9534109}
+    constructionOrder: 3
+  - slotId: Flak_L1_02
+    right: 0
+    row: 1
+    index: 2
+    localPosition: {x: -0.30487704, y: 0, z: 0.43353194}
+    yawDegrees: -35.116425
+    localRotation: {x: 0, y: -0.3016746, z: 0, w: 0.9534109}
+    constructionOrder: 4
+  - slotId: Flak_R1_03
+    right: 1
+    row: 1
+    index: 3
+    localPosition: {x: 0.35192382, y: 0, z: 0.39629483}
+    yawDegrees: 41.60621
+    localRotation: {x: 0, y: 0.3551576, z: 0, w: 0.9348064}
+    constructionOrder: 5
+  - slotId: Flak_L1_03
+    right: 0
+    row: 1
+    index: 3
+    localPosition: {x: -0.35192382, y: 0, z: 0.39629483}
+    yawDegrees: -41.6062
+    localRotation: {x: 0, y: -0.3551576, z: 0, w: 0.9348064}
+    constructionOrder: 6
+  - slotId: Flak_R1_04
+    right: 1
+    row: 1
+    index: 4
+    localPosition: {x: 0.39446032, y: 0, z: 0.35397884}
+    yawDegrees: 48.095993
+    localRotation: {x: 0, y: 0.4075018, z: 0, w: 0.91320443}
+    constructionOrder: 7
+  - slotId: Flak_L1_04
+    right: 0
+    row: 1
+    index: 4
+    localPosition: {x: -0.39446032, y: 0, z: 0.35397884}
+    yawDegrees: -48.09601
+    localRotation: {x: 0, y: -0.4075018, z: 0, w: 0.91320443}
+    constructionOrder: 8
+  - slotId: Flak_R1_05
+    right: 1
+    row: 1
+    index: 5
+    localPosition: {x: 0.43194148, y: 0, z: 0.30712625}
+    yawDegrees: 54.585773
+    localRotation: {x: 0, y: 0.45853922, z: 0, w: 0.8886742}
+    constructionOrder: 9
+  - slotId: Flak_L1_05
+    right: 0
+    row: 1
+    index: 5
+    localPosition: {x: -0.43194148, y: 0, z: 0.30712625}
+    yawDegrees: -54.585785
+    localRotation: {x: 0, y: -0.45853922, z: 0, w: 0.8886742}
+    constructionOrder: 10
+  - slotId: Flak_R1_06
+    right: 1
+    row: 1
+    index: 6
+    localPosition: {x: 0.46388686, y: 0, z: 0.25633755}
+    yawDegrees: 61.075558
+    localRotation: {x: 0, y: 0.5081064, z: 0, w: 0.8612943}
+    constructionOrder: 11
+  - slotId: Flak_L1_06
+    right: 0
+    row: 1
+    index: 6
+    localPosition: {x: -0.46388686, y: 0, z: 0.25633755}
+    yawDegrees: -61.07556
+    localRotation: {x: 0, y: -0.5081064, z: 0, w: 0.8612943}
+    constructionOrder: 12
+  - slotId: Flak_R1_07
+    right: 1
+    row: 1
+    index: 7
+    localPosition: {x: 0.48988712, y: 0, z: 0.20226365}
+    yawDegrees: 67.56534
+    localRotation: {x: 0, y: 0.5560442, z: 0, w: 0.8311527}
+    constructionOrder: 13
+  - slotId: Flak_L1_07
+    right: 0
+    row: 1
+    index: 7
+    localPosition: {x: -0.48988712, y: 0, z: 0.20226365}
+    yawDegrees: -67.56534
+    localRotation: {x: 0, y: -0.5560442, z: 0, w: 0.8311527}
+    constructionOrder: 14
+  - slotId: Flak_R2_01
+    right: 1
+    row: 2
+    index: 1
+    localPosition: {x: 0.37247732, y: 0, z: 0.4639888}
+    yawDegrees: 38.756527
+    localRotation: {x: 0, y: 0.33180326, z: 0, w: 0.9433486}
+    constructionOrder: 15
+  - slotId: Flak_L2_01
+    right: 0
+    row: 2
+    index: 1
+    localPosition: {x: -0.37247732, y: 0, z: 0.4639888}
+    yawDegrees: -38.75653
+    localRotation: {x: 0, y: -0.33180326, z: 0, w: 0.9433486}
+    constructionOrder: 16
+  - slotId: Flak_R2_02
+    right: 1
+    row: 2
+    index: 2
+    localPosition: {x: 0.41731277, y: 0, z: 0.42411673}
+    yawDegrees: 44.53671
+    localRotation: {x: 0, y: 0.37894508, z: 0, w: 0.92541915}
+    constructionOrder: 17
+  - slotId: Flak_L2_02
+    right: 0
+    row: 2
+    index: 2
+    localPosition: {x: -0.41731277, y: 0, z: 0.42411673}
+    yawDegrees: -44.536713
+    localRotation: {x: 0, y: -0.37894508, z: 0, w: 0.92541915}
+    constructionOrder: 18
+  - slotId: Flak_R2_03
+    right: 1
+    row: 2
+    index: 3
+    localPosition: {x: 0.45790467, y: 0, z: 0.37993193}
+    yawDegrees: 50.316887
+    localRotation: {x: 0, y: 0.42512292, z: 0, w: 0.9051357}
+    constructionOrder: 19
+  - slotId: Flak_L2_03
+    right: 0
+    row: 2
+    index: 3
+    localPosition: {x: -0.45790467, y: 0, z: 0.37993193}
+    yawDegrees: -50.316895
+    localRotation: {x: 0, y: -0.42512292, z: 0, w: 0.9051357}
+    constructionOrder: 20
+  - slotId: Flak_R2_04
+    right: 1
+    row: 2
+    index: 4
+    localPosition: {x: 0.49384025, y: 0, z: 0.33188367}
+    yawDegrees: 56.097054
+    localRotation: {x: 0, y: 0.47021922, z: 0, w: 0.88254964}
+    constructionOrder: 21
+  - slotId: Flak_L2_04
+    right: 0
+    row: 2
+    index: 4
+    localPosition: {x: -0.49384025, y: 0, z: 0.33188367}
+    yawDegrees: -56.097046
+    localRotation: {x: 0, y: -0.47021922, z: 0, w: 0.88254964}
+    constructionOrder: 22
+  - slotId: Flak_R2_05
+    right: 1
+    row: 2
+    index: 5
+    localPosition: {x: 0.52475405, y: 0, z: 0.28046057}
+    yawDegrees: 61.87724
+    localRotation: {x: 0, y: 0.5141195, z: 0, w: 0.8577186}
+    constructionOrder: 23
+  - slotId: Flak_L2_05
+    right: 0
+    row: 2
+    index: 5
+    localPosition: {x: -0.52475405, y: 0, z: 0.28046057}
+    yawDegrees: -61.877228
+    localRotation: {x: 0, y: -0.5141195, z: 0, w: 0.8577186}
+    constructionOrder: 24
+  - slotId: Flak_R2_06
+    right: 1
+    row: 2
+    index: 6
+    localPosition: {x: 0.5503318, y: 0, z: 0.22618553}
+    yawDegrees: 67.65741
+    localRotation: {x: 0, y: 0.55671185, z: 0, w: 0.83070564}
+    constructionOrder: 25
+  - slotId: Flak_L2_06
+    right: 0
+    row: 2
+    index: 6
+    localPosition: {x: -0.5503318, y: 0, z: 0.22618553}
+    yawDegrees: -67.65741
+    localRotation: {x: 0, y: -0.55671185, z: 0, w: 0.83070564}
+    constructionOrder: 26
+  - slotId: Flak_R2_07
+    right: 1
+    row: 2
+    index: 7
+    localPosition: {x: 0.5703133, y: 0, z: 0.16961046}
+    yawDegrees: 73.4376
+    localRotation: {x: 0, y: 0.5978882, z: 0, w: 0.80157954}
+    constructionOrder: 27
+  - slotId: Flak_L2_07
+    right: 0
+    row: 2
+    index: 7
+    localPosition: {x: -0.5703133, y: 0, z: 0.16961046}
+    yawDegrees: -73.43759
+    localRotation: {x: 0, y: -0.5978882, z: 0, w: 0.80157954}
+    constructionOrder: 28

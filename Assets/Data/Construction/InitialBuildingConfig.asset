@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 77f7bb10b001fe5439330d3cd430c210, type: 3}
+  m_Name: InitialBuildingConfig
+  m_EditorClassIdentifier: Assembly-CSharp::InitialBuildingConfig
+  entries:
+  - type: 4
+    count: 2
+    buildingLevel: 1
+    slotIds:
+    - Flak_R1_01
+    - Flak_L1_01
+  - type: 3
+    count: 1
+    buildingLevel: 1
+    slotIds:
+    - FactoryRefinery

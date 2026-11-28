@@ -97,6 +97,11 @@ public sealed class BaseMenuBootstrap : MonoBehaviour
         {
             gameObject.AddComponent<BaseMenuView>();
         }
+
+        if (GetComponent<BaseMenuFlakBuildOption>() == null)
+        {
+            gameObject.AddComponent<BaseMenuFlakBuildOption>();
+        }
     }
 
     private void Start()

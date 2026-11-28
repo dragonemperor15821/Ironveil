@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 96385c6cf5f7571498324d595ffbdaad, type: 3}
+  m_Name: BaseCommand
+  m_EditorClassIdentifier: Assembly-CSharp::BuildingDefinition
+  type: 0
+  displayName: Base Command
+  levels:
+  - level: 1
+    prefab: {fileID: 3480778997726301610, guid: 31f24278d88c6c340b9cbab7a3d63511, type: 3}
+    facingYawOffset: 0
+  - level: 5
+    prefab: {fileID: 919132149155446097, guid: 110f44271ef003f4f82210df7fa092e4, type: 3}
+    facingYawOffset: 0
+  instanceScale: 0.2
+  maxCount: 0
+  missingLevelsNote: Models present for building levels 1, 5. No models for levels 2, 3, 4. Maximum building level NOT confirmed (levels above 5 unknown).

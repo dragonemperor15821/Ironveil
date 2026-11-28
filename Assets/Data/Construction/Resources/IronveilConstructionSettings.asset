@@ -1,0 +1,17 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2e0f905d2ed2ed44c8fa613ba2a7168e, type: 3}
+  m_Name: IronveilConstructionSettings
+  m_EditorClassIdentifier: Assembly-CSharp::ConstructionSettings
+  buildingCatalog: {fileID: 11400000, guid: 9679ea7cc7ec23e4986b1df79b272da7, type: 2}
+  initialConfig: {fileID: 11400000, guid: 16fbd0a5f9a87aa4cac0db01a87360ac, type: 2}
+  flakLayouts: {fileID: 11400000, guid: d97209d72cfe58c40914afd672b2e16e, type: 2}
